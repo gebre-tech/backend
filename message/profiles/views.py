@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from .models import Profile
+from django.contrib.auth.models import User
 from .serializers import ProfileSerializer
 from rest_framework.permissions import IsAuthenticated
 
@@ -44,3 +45,15 @@ class UpdateLastSeenView(APIView):
         profile.last_seen = request.data.get('last_seen')
         profile.save()
         return Response({"status": "Last seen updated"}, status=status.HTTP_200_OK)
+    # profiles/views.py
+class FriendProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, username):
+        try:
+            friend = User.objects.get(username=username)
+            profile = Profile.objects.get(user=friend)
+            serializer = ProfileSerializer(profile)
+            return Response(serializer.data)
+        except (User.DoesNotExist, Profile.DoesNotExist):
+            return Response({"error": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)

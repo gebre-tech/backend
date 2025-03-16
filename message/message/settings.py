@@ -82,15 +82,21 @@ WSGI_APPLICATION = 'message.wsgi.application'
 # Channels for WebSockets
 ASGI_APPLICATION = "message.asgi.application"
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer",  # Use this for local testing
-        # "BACKEND": "channels_redis.core.RedisChannelLayer",  # Uncomment for production
-        # "CONFIG": {
-        #     "hosts": [("127.0.0.1", 6379)],  # Redis connection
-        # },
-    },
-}
+if os.getenv("ENV") == "PRODUCTION":
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                "hosts": [('127.0.0.1', 6379)],
+            },
+        },
+    }
+else:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        },
+    }
 
 
 # Database
