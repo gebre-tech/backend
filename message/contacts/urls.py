@@ -1,12 +1,8 @@
-# contacts/urls.py
 from django.urls import path
-from contacts.views import (
+from .views import (
     SendFriendRequestView, GetFriendRequestsView, AcceptFriendRequestView,
-    RejectFriendRequestView, 
-    GetContactsView, 
-    SearchContactsView, 
-    SearchUsersView,
-    SentFriendRequestsView
+    RejectFriendRequestView, GetContactsView, SearchContactsView, SearchUsersView,
+    SentFriendRequestsView, AddFriendView, RemoveFriendView, GetContactsWithProfilesView
 )
 
 urlpatterns = [
@@ -16,6 +12,9 @@ urlpatterns = [
     path('accept/<int:request_id>/', AcceptFriendRequestView.as_view(), name='accept_friend_request'),
     path('reject/<int:request_id>/', RejectFriendRequestView.as_view(), name='reject_friend_request'),
     path('list/', GetContactsView.as_view(), name='get_contacts'),
+    path('list_with_profiles/', GetContactsWithProfilesView.as_view(), name='get_contacts_with_profiles'),
     path('search/', SearchContactsView.as_view(), name='search_contacts'),
     path('search/users/', SearchUsersView.as_view(), name='search_users'),
+    path('add/', AddFriendView.as_view(), name='add_friend'),
+    path('contacts/remove/<int:friend_id>/', RemoveFriendView.as_view(), name='remove_friend'),  # Fixed 'views.' to direct import
 ]

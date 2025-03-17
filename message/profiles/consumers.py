@@ -22,19 +22,19 @@ class ProfileConsumer(AsyncWebsocketConsumer):
         action = data.get('type')
 
         if action == 'update_last_seen':
-            await self.update_last_seen()
+            await self.handle_update_last_seen()
         elif action == 'update_profile':
-            await self.update_profile(data)
+            await self.handle_update_profile(data)
 
     @database_sync_to_async
-    def update_last_seen(self):
+    def _update_last_seen_db(self):
         profile = Profile.objects.get(user=self.user)
         profile.last_seen = timezone.now()
         profile.save()
         return profile.last_seen.isoformat()
 
     @database_sync_to_async
-    def update_profile(self, data):
+    def _update_profile_db(self, data):
         profile = Profile.objects.get(user=self.user)
         user = profile.user
         user.username = data.get('username', user.username)
@@ -42,8 +42,9 @@ class ProfileConsumer(AsyncWebsocketConsumer):
         user.last_name = data.get('last_name', user.last_name)
         user.save()
         profile.bio = data.get('bio', profile.bio)
+        # Note: profile_picture updates should ideally come from the HTTP view, not WebSocket
+        # If needed, this assumes a URL string is sent; file uploads need HTTP
         if 'profile_picture' in data and data['profile_picture']:
-            # For simplicity, assume profile_picture is handled via URL or file upload in view
             profile.profile_picture = data['profile_picture']
         profile.save()
         return {
@@ -52,22 +53,11 @@ class ProfileConsumer(AsyncWebsocketConsumer):
             'last_name': user.last_name,
             'bio': profile.bio,
             'profile_picture': profile.profile_picture.url if profile.profile_picture else None,
-            'last_seen': profile.last_seen.isoformat()
+            'last_seen': profile.last_seen.isoformat() if profile.last_seen else None
         }
 
-    async def profile_update(self, event):
-        await self.send(text_data=json.dumps({
-            'type': 'profile_update',
-            'username': event['username'],
-            'first_name': event['first_name'],
-            'last_name': event['last_name'],
-            'bio': event['bio'],
-            'profile_picture': event['profile_picture'],
-            'last_seen': event['last_seen']
-        }))
-
-    async def update_last_seen(self):
-        last_seen = await self.update_last_seen()
+    async def handle_update_last_seen(self):
+        last_seen = await self._update_last_seen_db()
         await self.channel_layer.group_send(
             self.group_name,
             {
@@ -76,8 +66,8 @@ class ProfileConsumer(AsyncWebsocketConsumer):
             }
         )
 
-    async def update_profile(self, data):
-        updated_data = await self.update_profile(data)
+    async def handle_update_profile(self, data):
+        updated_data = await self._update_profile_db(data)
         await self.channel_layer.group_send(
             self.group_name,
             {
@@ -90,6 +80,17 @@ class ProfileConsumer(AsyncWebsocketConsumer):
                 'last_seen': updated_data['last_seen']
             }
         )
+
+    async def profile_update(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'profile_update',
+            'username': event['username'],
+            'first_name': event['first_name'],
+            'last_name': event['last_name'],
+            'bio': event['bio'],
+            'profile_picture': event['profile_picture'],
+            'last_seen': event['last_seen']
+        }))
 
     async def last_seen_update(self, event):
         await self.send(text_data=json.dumps({
