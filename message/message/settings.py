@@ -127,6 +127,16 @@ SIMPLE_JWT = {
     #'ROTATE_REFRESH_TOKENS': True,                 # Issue new refresh token on refresh
     #'BLACKLIST_AFTER_ROTATION': True,
 }
+# settings.py
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # For testing
+# For production, use SMTP:
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_HOST = 'smtp.gmail.com'
+# EMAIL_PORT = 587
+# EMAIL_USE_TLS = True
+# EMAIL_HOST_USER = 'your-email@gmail.com'
+# EMAIL_HOST_PASSWORD = 'your-app-specific-password'
+DEFAULT_FROM_EMAIL = 'noreply@yourapp.com'
 
 # CORS Settings
 CORS_ALLOW_ALL_ORIGINS = True
