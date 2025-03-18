@@ -1,35 +1,34 @@
 from rest_framework import serializers
-from .models import Chat
-from .models import ChatMessage  # Ensure this import is present
-
+from .models import ChatRoom, ChatMessage
 from authentication.serializers import UserSerializer
 
-
-class ChatRoomSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Chat
-        fields = ['id', 'name', 'members', 'created_at']
-
 class ChatMessageSerializer(serializers.ModelSerializer):
+    sender = UserSerializer(read_only=True)
+    attachment_url = serializers.SerializerMethodField()
+
     class Meta:
         model = ChatMessage
-        fields = ['id', 'sender', 'chat', 'content', 'attachment', 'timestamp', 'seen_by']
+        fields = ['id', 'sender', 'chat', 'content', 'message_type', 'attachment_url', 'timestamp', 'seen_by', 'delivered_to']
+        read_only_fields = ['sender', 'timestamp']
 
+    def get_attachment_url(self, obj):
+        if obj.attachment:
+            return obj.attachment.url
+        return None
 
+class ChatRoomSerializer(serializers.ModelSerializer):
+    members = UserSerializer(many=True, read_only=True)
+    last_message = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
 
-
-
-
-class ChatSerializer(serializers.ModelSerializer):
-    sender = UserSerializer(read_only=True)
-    receiver = UserSerializer(read_only=True)
-    timestamp = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S")
-    
     class Meta:
-        model = Chat
-        fields = ['id', 'sender', 'receiver', 'message', 'attachment', 'is_read', 'timestamp']
+        model = ChatRoom
+        fields = ['id', 'name', 'members', 'is_group', 'created_at', 'last_message', 'unread_count']
 
-    def create(self, validated_data):
-        # This is where you can handle message creation
-        chat = Chat.objects.create(**validated_data)
-        return chat
+    def get_last_message(self, obj):
+        last = obj.messages.first()
+        return ChatMessageSerializer(last).data if last else None
+
+    def get_unread_count(self, obj):
+        user = self.context['request'].user
+        return obj.messages.exclude(seen_by=user).count()

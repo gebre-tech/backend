@@ -1,117 +1,161 @@
-#chat/views.py
 from rest_framework.views import APIView
-from django.contrib.auth.models import User
 from rest_framework.response import Response
 from rest_framework import status
-from .models import ChatMessage, ChatRoom
-from .serializers import ChatMessageSerializer, ChatRoomSerializer
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import api_view, permission_classes
+from django.contrib.auth import get_user_model
+from .models import ChatRoom, ChatMessage
+from .serializers import ChatRoomSerializer, ChatMessageSerializer
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
+from rest_framework.decorators import api_view, permission_classes
+import logging
 
-# Send a message in a direct chat
+User = get_user_model()
+logger = logging.getLogger(__name__)
+
 class SendMessageView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         receiver_id = request.data.get("receiver_id")
-        message = request.data.get("message")
-        attachment = request.data.get("attachment", None)
+        content = request.data.get("content", "")  # Default to empty string if not provided
+        message_type = request.data.get("message_type", "text")
+        attachment = request.FILES.get("attachment")
+
+        if not receiver_id:
+            return Response({"error": "Receiver ID is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             receiver = User.objects.get(id=receiver_id)
+            # Find or create a one-on-one chat room
+            chat_room = ChatRoom.objects.filter(is_group=False, members=request.user).filter(members=receiver).first()
+            if not chat_room:
+                chat_room = ChatRoom.objects.create(name="", is_group=False)
+                chat_room.members.add(request.user, receiver)
+                logger.info(f"Created new chat room {chat_room.id} between {request.user.username} and {receiver.username}")
+            else:
+                logger.info(f"Using existing chat room {chat_room.id}")
+
+            # Create the message
+            message = ChatMessage(
+                sender=request.user,
+                chat=chat_room,
+                content=content,
+                message_type=message_type,
+            )
+            if attachment:
+                file_name = default_storage.save(f"chat_attachments/{attachment.name}", ContentFile(attachment.read()))
+                message.attachment = file_name
+                logger.info(f"Attachment saved: {file_name}")
+
+            message.save()
+            message.delivered_to.add(*chat_room.members.all())  # Mark as delivered to all members
+            serializer = ChatMessageSerializer(message, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
         except User.DoesNotExist:
+            logger.error(f"Receiver with ID {receiver_id} not found")
             return Response({"error": "Receiver not found"}, status=status.HTTP_404_NOT_FOUND)
-        
-        sender = request.user
-        
-        # Create a message for the chat (assuming a direct message)
-        chat_message = ChatMessage.objects.create(
-            sender=sender,
-            chat=receiver,  # For direct chat, treat the receiver as a 'chat'
-            content=message,
-            attachment=attachment
-        )
+        except Exception as e:
+            logger.error(f"Error in SendMessageView: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Serialize the message and return the response
-        serializer = ChatMessageSerializer(chat_message)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-# Get all messages between the authenticated user and another user
 class GetMessagesView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, user_id):
-        # Get messages between the authenticated user and another user
-        messages = ChatMessage.objects.filter(
-            chat__members=request.user
-        ).filter(
-            sender_id=user_id
-        ) | ChatMessage.objects.filter(
-            chat__members=user_id
-        ).filter(
-            sender=request.user
-        )
+    def get(self, request, chat_id):  # Updated to use chat_id instead of user_id
+        try:
+            chat_room = ChatRoom.objects.get(id=chat_id, members=request.user)
+            messages = chat_room.messages.all().order_by('timestamp')
+            serializer = ChatMessageSerializer(messages, many=True, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except ChatRoom.DoesNotExist:
+            logger.error(f"Chat room {chat_id} not found for user {request.user.username}")
+            return Response({"error": "Chat not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error in GetMessagesView: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        serializer = ChatMessageSerializer(messages, many=True)
-        return Response(serializer.data)
-
-# Mark a message as read
 class MarkAsReadView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, message_id):
         try:
-            message = ChatMessage.objects.get(id=message_id)
-            # Ensure the user is a member of the chat
-            if not message.chat.members.filter(id=request.user.id).exists():
-                return Response({"error": "You cannot mark this message as read."}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Mark the message as read by adding the user to the 'seen_by' field
+            message = ChatMessage.objects.get(id=message_id, chat__members=request.user)
             message.seen_by.add(request.user)
-            message.save()
-
+            logger.info(f"Message {message_id} marked as read by {request.user.username}")
             return Response({"status": "Message marked as read"}, status=status.HTTP_200_OK)
         except ChatMessage.DoesNotExist:
+            logger.error(f"Message {message_id} not found")
             return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error in MarkAsReadView: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# Upload a file as an attachment to a message
+class ChatRoomListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            chat_rooms = ChatRoom.objects.filter(members=request.user).order_by('-updated_at')
+            serializer = ChatRoomSerializer(chat_rooms, many=True, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error in ChatRoomListView: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def upload_attachment(request, chat_id):
     file = request.FILES.get("file")
     if not file:
-        return Response({"error": "No file uploaded"}, status=400)
+        logger.error("No file uploaded in upload_attachment")
+        return Response({"error": "No file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
 
-    file_name = default_storage.save(f"chat_attachments/{file.name}", ContentFile(file.read()))
-    file_url = default_storage.url(file_name)
+    try:
+        chat_room = ChatRoom.objects.get(id=chat_id, members=request.user)
+        file_name = default_storage.save(f"chat_attachments/{file.name}", ContentFile(file.read()))
+        file_url = default_storage.url(file_name)
+        logger.info(f"Uploaded attachment {file_name} for chat {chat_id}")
+        return Response({"file_url": file_url}, status=status.HTTP_201_CREATED)
+    except ChatRoom.DoesNotExist:
+        logger.error(f"Chat room {chat_id} not found for upload_attachment")
+        return Response({"error": "Chat not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        logger.error(f"Error in upload_attachment: {str(e)}")
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    return Response({"file_url": file_url})
-
-# Create a new group chat
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def create_group_chat(request):
     name = request.data.get("name")
     member_ids = request.data.get("members", [])
-    members = User.objects.filter(id__in=member_ids)
 
-    if not name or not members.exists():
-        return Response({"error": "Group name and at least one member are required"}, status=400)
+    if not name or not member_ids:
+        logger.error("Missing name or members in create_group_chat")
+        return Response({"error": "Group name and at least one member required"}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Create the group chat
-    chat_room = ChatRoom.objects.create(name=name)
-    chat_room.members.set(members)
-    chat_room.members.add(request.user)  # Add creator to group
-    chat_room.save()
+    try:
+        members = User.objects.filter(id__in=member_ids)
+        if not members.exists():
+            logger.error("No valid members found for group chat")
+            return Response({"error": "No valid members found"}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Optionally, create an initial message announcing the creation of the group
-    group_message = ChatMessage.objects.create(
-        sender=request.user,
-        chat=chat_room,
-        content=f"Group '{name}' created."
-    )
+        chat_room = ChatRoom.objects.create(name=name, is_group=True)
+        chat_room.members.set(members)
+        chat_room.members.add(request.user)
+        logger.info(f"Created group chat {chat_room.id} with name {name}")
 
-    # Return the created group chat data
-    return Response(ChatRoomSerializer(chat_room).data)
+        # Create a system message for group creation
+        message = ChatMessage.objects.create(
+            sender=request.user,
+            chat=chat_room,
+            content=f"Group '{name}' created.",
+            message_type="text"
+        )
+        message.delivered_to.add(*chat_room.members.all())
+
+        serializer = ChatRoomSerializer(chat_room, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    except Exception as e:
+        logger.error(f"Error in create_group_chat: {str(e)}")
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
