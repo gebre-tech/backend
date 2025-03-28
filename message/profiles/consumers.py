@@ -5,21 +5,51 @@ from channels.db import database_sync_to_async
 from django.utils import timezone
 from .models import Profile
 from authentication.models import User
+from rest_framework_simplejwt.tokens import AccessToken
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ProfileConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        self.user = self.scope['user']
-        self.group_name = f"profile_{self.user.id}"
+        # Extract token from query string
+        token = self.scope['query_string'].decode().split('token=')[1] if 'token=' in self.scope['query_string'].decode() else None
+        if not token:
+            logger.warning("No token provided in WebSocket connection")
+            await self.close(code=4001)
+            return
 
+        try:
+            # Validate token and get user
+            access_token = AccessToken(token)
+            user_id = access_token['user_id']
+            self.user = await database_sync_to_async(User.objects.get)(id=user_id)
+            if not self.user.is_authenticated:
+                logger.warning(f"User {user_id} not authenticated")
+                await self.close(code=4002)
+                return
+        except Exception as e:
+            logger.error(f"Token validation error: {str(e)}")
+            await self.close(code=4003)
+            return
+
+        self.group_name = f"profile_{self.user.id}"
+        logger.info(f"WebSocket connected for user {self.user.username} (id={self.user.id})")
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
 
     async def disconnect(self, close_code):
+        logger.info(f"WebSocket disconnected for group {self.group_name}, code={close_code}")
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
     async def receive(self, text_data):
-        data = json.loads(text_data)
-        action = data.get('type')
+        try:
+            data = json.loads(text_data)
+            action = data.get('type')
+            logger.debug(f"Received WebSocket message: {data}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in WebSocket message: {str(e)}")
+            return
 
         if action == 'update_last_seen':
             await self.handle_update_last_seen()
@@ -28,9 +58,10 @@ class ProfileConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _update_last_seen_db(self):
-        profile = Profile.objects.get(user=self.user)
+        profile, created = Profile.objects.get_or_create(user=self.user)
         profile.last_seen = timezone.now()
         profile.save()
+        logger.debug(f"Updated last_seen for user {self.user.username} to {profile.last_seen}")
         return profile.last_seen.isoformat()
 
     @database_sync_to_async
@@ -42,11 +73,10 @@ class ProfileConsumer(AsyncWebsocketConsumer):
         user.last_name = data.get('last_name', user.last_name)
         user.save()
         profile.bio = data.get('bio', profile.bio)
-        # Note: profile_picture updates should ideally come from the HTTP view, not WebSocket
-        # If needed, this assumes a URL string is sent; file uploads need HTTP
         if 'profile_picture' in data and data['profile_picture']:
             profile.profile_picture = data['profile_picture']
         profile.save()
+        logger.info(f"Updated profile for user {user.username}")
         return {
             'username': user.username,
             'first_name': user.first_name,
