@@ -12,6 +12,17 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 import os
 from pathlib import Path
 from datetime import timedelta
+import atexit
+from concurrent.futures import ThreadPoolExecutor
+from psycopg2 import pool
+
+executor = ThreadPoolExecutor(max_workers=10)
+
+def cleanup():
+    executor.shutdown(wait=False)  # Force shutdown without waiting
+    print("Executor shut down gracefully")
+
+atexit.register(cleanup)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -24,7 +35,6 @@ SECRET_KEY = 'django-insecure-21_xhmoajxi3m3zpxp(+fl(-l+=^tg!e^q+g!gli3)m3s58cm!
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
-
 
 # Application definition
 
@@ -127,6 +137,23 @@ DATABASES = {
     }
 }
 
+# Extract the relevant connection parameters for psycopg2
+db_params = {
+    'dbname': DATABASES['default']['NAME'],
+    'user': DATABASES['default']['USER'],
+    'password': DATABASES['default']['PASSWORD'],
+    'host': DATABASES['default']['HOST'],
+    'port': DATABASES['default']['PORT'],
+}
+
+# Initialize the database connection pool
+db_pool = pool.ThreadedConnectionPool(1, 20, **db_params)
+
+def close_db_pool():
+    db_pool.closeall()
+
+atexit.register(close_db_pool)
+
 AUTH_USER_MODEL = 'authentication.User'
 
 REST_FRAMEWORK = {
@@ -195,6 +222,7 @@ USE_TZ = True
 STATIC_URL = '/static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 

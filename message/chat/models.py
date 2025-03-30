@@ -9,8 +9,12 @@ class ChatRoom(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_group = models.BooleanField(default=False)
-    admins = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="admin_chat_rooms", blank=True)
-    pinned_message = models.OneToOneField('ChatMessage', null=True, blank=True, on_delete=models.SET_NULL, related_name="pinned_in")
+    admins = models.ManyToManyField(
+        settings.AUTH_USER_MODEL, related_name="admin_chat_rooms", blank=True
+    )
+    pinned_message = models.OneToOneField(
+        'ChatMessage', null=True, blank=True, on_delete=models.SET_NULL, related_name="pinned_in"
+    )
 
     def __str__(self):
         return self.name or f"Direct Chat {self.id}"
@@ -45,20 +49,39 @@ class ChatMessage(models.Model):
         ('system', 'System'),
     )
     
-    sender = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='sent_messages')
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='sent_messages'
+    )
     chat = models.ForeignKey(ChatRoom, on_delete=models.CASCADE, related_name='messages')
     content = models.TextField(blank=True, null=True)
     message_type = models.CharField(max_length=10, choices=MESSAGE_TYPES, default='text')
-    attachment = models.FileField(upload_to="chat_attachments/%Y/%m/%d/", blank=True, null=True)
+    attachment = models.FileField(
+        upload_to="chat_attachments/%Y/%m/%d/", blank=True, null=True
+    )
+    attachment_url = models.URLField(blank=True, null=True)  # Added for frontend compatibility
     timestamp = models.DateTimeField(auto_now_add=True)
     edited_at = models.DateTimeField(null=True, blank=True)
     is_deleted = models.BooleanField(default=False)
-    forwarded_from = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='forwards')
-    seen_by = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="seen_messages", blank=True, through='MessageSeen')
-    delivered_to = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="delivered_messages", blank=True)
+    forwarded_from = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL, related_name='forwards'
+    )
+    seen_by = models.ManyToManyField(
+        settings.AUTH_USER_MODEL, related_name="seen_messages", blank=True, through='MessageSeen'
+    )
+    delivered_to = models.ManyToManyField(
+        settings.AUTH_USER_MODEL, related_name="delivered_messages", blank=True
+    )
+    reactions = models.JSONField(default=list, blank=True)  # Added for reactions support
 
     class Meta:
         ordering = ['timestamp']
+
+    def save(self, *args, **kwargs):
+        # Automatically populate attachment_url if attachment is provided
+        if self.attachment and not self.attachment_url:
+            from django.conf import settings
+            self.attachment_url = f"{settings.MEDIA_URL}{self.attachment.name}"
+        super().save(*args, **kwargs)
 
     def unread_count(self, user):
         return self.chat.messages.exclude(seen_by=user).count()

@@ -13,21 +13,23 @@ class MessageSeenSerializer(serializers.ModelSerializer):
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     sender = UserSerializer(read_only=True)
-    attachment_url = serializers.SerializerMethodField()  # For frontend compatibility
     seen_by_details = MessageSeenSerializer(source='messageseen_set', many=True, read_only=True)
     delivered_to = UserSerializer(many=True, read_only=True)
-    forwarded_from = 'self'  # Recursive reference
-    chat = serializers.PrimaryKeyRelatedField(queryset=ChatRoom.objects.all())  # Required for creation
+    forwarded_from = 'self'
+    chat = serializers.PrimaryKeyRelatedField(queryset=ChatRoom.objects.all())
 
     class Meta:
         model = ChatMessage
         fields = [
             'id', 'sender', 'chat', 'content', 'message_type', 'attachment', 'attachment_url',
-            'timestamp', 'edited_at', 'is_deleted', 'forwarded_from', 'seen_by_details', 'delivered_to'
+            'timestamp', 'edited_at', 'is_deleted', 'forwarded_from', 'seen_by_details',
+            'delivered_to', 'reactions'  # Added reactions
         ]
         read_only_fields = ['sender', 'timestamp', 'edited_at', 'is_deleted', 'seen_by_details', 'delivered_to']
 
     def get_attachment_url(self, obj):
+        if obj.attachment_url:
+            return obj.attachment_url
         if obj.attachment:
             return self.context['request'].build_absolute_uri(obj.attachment.url)
         return None
@@ -37,6 +39,11 @@ class ChatMessageSerializer(serializers.ModelSerializer):
         if instance.forwarded_from:
             representation['forwarded_from'] = ChatMessageSerializer(instance.forwarded_from, context=self.context).data
         return representation
+
+class ChatMessageMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChatMessage
+        fields = ['id', 'content', 'timestamp']
 
 class ChatRoomSerializer(serializers.ModelSerializer):
     members = UserSerializer(many=True, read_only=True)
