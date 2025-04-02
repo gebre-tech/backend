@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 class ProfileConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        # Extract token from query string
         token = self.scope['query_string'].decode().split('token=')[1] if 'token=' in self.scope['query_string'].decode() else None
         if not token:
             logger.warning("No token provided in WebSocket connection")
@@ -20,7 +19,6 @@ class ProfileConsumer(AsyncWebsocketConsumer):
             return
 
         try:
-            # Validate token and get user
             access_token = AccessToken(token)
             user_id = access_token['user_id']
             self.user = await database_sync_to_async(User.objects.get)(id=user_id)
@@ -73,16 +71,19 @@ class ProfileConsumer(AsyncWebsocketConsumer):
         user.last_name = data.get('last_name', user.last_name)
         user.save()
         profile.bio = data.get('bio', profile.bio)
-        if 'profile_picture' in data and data['profile_picture']:
-            profile.profile_picture = data['profile_picture']
         profile.save()
         logger.info(f"Updated profile for user {user.username}")
+
+        from .serializers import ProfileSerializer
+        serializer = ProfileSerializer(profile)  # No request context needed
+        profile_picture_url = serializer.data['profile_picture']
+
         return {
             'username': user.username,
             'first_name': user.first_name,
             'last_name': user.last_name,
             'bio': profile.bio,
-            'profile_picture': profile.profile_picture.url if profile.profile_picture else None,
+            'profile_picture': profile_picture_url,
             'last_seen': profile.last_seen.isoformat() if profile.last_seen else None
         }
 
