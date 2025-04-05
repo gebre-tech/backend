@@ -15,6 +15,59 @@ import os
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from .models import ChatRoom, ChatMessage
+from .serializers import ChatRoomSerializer, ChatMessageSerializer
+from django.contrib.auth.models import User
+
+class ChatProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, chat_id):
+        try:
+            chat_room = ChatRoom.objects.get(id=chat_id)
+            if not chat_room.members.filter(id=request.user.id).exists():
+                return Response({"error": "You are not a member of this chat"}, status=status.HTTP_403_FORBIDDEN)
+
+            serializer = ChatRoomSerializer(chat_room, context={'request': request})
+            data = serializer.data
+
+            # Add additional fields for one-on-one chats
+            if not chat_room.is_group:
+                other_member = chat_room.members.exclude(id=request.user.id).first()
+                if other_member:
+                    data["user"] = {
+                        "id": str(other_member.id),
+                        "first_name": other_member.first_name,
+                        "username": other_member.username,
+                        "profile_picture": other_member.profile_picture.url if other_member.profile_picture else None,
+                    }
+                    data["is_online"] = is_user_online(other_member.last_seen)  # Implement this function
+                    data["last_seen"] = other_member.last_seen.isoformat() if other_member.last_seen else None
+                    data["profile_picture"] = other_member.profile_picture.url if other_member.profile_picture else None
+
+            # Add pinned message
+            pinned_message = chat_room.messages.filter(isPinned=True).first()
+            if pinned_message:
+                data["pinned_message"] = ChatMessageSerializer(pinned_message).data
+
+            return Response(data, status=status.HTTP_200_OK)
+        except ChatRoom.DoesNotExist:
+            return Response({"error": "Chat not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# Helper function to determine if a user is online
+def is_user_online(last_seen):
+    from datetime import datetime, timedelta
+    if not last_seen:
+        return False
+    now = datetime.utcnow().replace(tzinfo=last_seen.tzinfo)
+    return (now - last_seen) < timedelta(minutes=5)
+
 class SendMessageView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -29,7 +82,11 @@ class SendMessageView(APIView):
         if not receiver_id and message_type != "system":
             logger.warning("Receiver ID required for non-system message")
             return Response({"error": "Receiver ID is required"}, status=status.HTTP_400_BAD_REQUEST)
-
+        
+        if message_type != "system" and not content.strip() and not attachment_url:
+            logger.warning("Content or attachment required for non-system message")
+            return Response({"error": "Content or attachment is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
             chat_room = None
             if receiver_id:

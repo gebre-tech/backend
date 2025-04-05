@@ -1,6 +1,7 @@
 # chat/models.py
 from django.db import models
 from django.conf import settings
+from django.db import IntegrityError
 from django.utils import timezone
 
 class ChatRoom(models.Model):
@@ -58,7 +59,7 @@ class ChatMessage(models.Model):
     attachment = models.FileField(
         upload_to="chat_attachments/%Y/%m/%d/", blank=True, null=True
     )
-    attachment_url = models.URLField(blank=True, null=True)  # Added for frontend compatibility
+    attachment_url = models.URLField(blank=True, null=True)
     timestamp = models.DateTimeField(auto_now_add=True)
     edited_at = models.DateTimeField(null=True, blank=True)
     is_deleted = models.BooleanField(default=False)
@@ -71,17 +72,29 @@ class ChatMessage(models.Model):
     delivered_to = models.ManyToManyField(
         settings.AUTH_USER_MODEL, related_name="delivered_messages", blank=True
     )
-    reactions = models.JSONField(default=list, blank=True)  # Added for reactions support
+    reactions = models.JSONField(default=list, blank=True)
 
     class Meta:
         ordering = ['timestamp']
+        # Add unique constraint to prevent duplicates
+        unique_together = ('chat', 'sender', 'content', 'message_type', 'timestamp')
 
     def save(self, *args, **kwargs):
-        # Automatically populate attachment_url if attachment is provided
         if self.attachment and not self.attachment_url:
             from django.conf import settings
             self.attachment_url = f"{settings.MEDIA_URL}{self.attachment.name}"
-        super().save(*args, **kwargs)
+        try:
+            super().save(*args, **kwargs)
+        except IntegrityError:
+            # If a duplicate is detected, fetch the existing message
+            existing_message = ChatMessage.objects.get(
+                chat=self.chat,
+                sender=self.sender,
+                content=self.content,
+                message_type=self.message_type,
+                timestamp=self.timestamp
+            )
+            return existing_message
 
     def unread_count(self, user):
         return self.chat.messages.exclude(seen_by=user).count()

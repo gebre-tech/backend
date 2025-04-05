@@ -146,6 +146,10 @@ db_params = {
     'port': DATABASES['default']['PORT'],
 }
 
+
+REDIS_HOST = 'localhost'
+REDIS_PORT = 6379
+REDIS_DB = 0
 # Initialize the database connection pool
 db_pool = pool.ThreadedConnectionPool(1, 20, **db_params)
 

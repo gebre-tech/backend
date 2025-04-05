@@ -1,15 +1,27 @@
 # chat/consumers.py
 import json
 import logging
+import redis
+from django.conf import settings
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from .models import ChatRoom, ChatMessage
 from .serializers import ChatMessageSerializer, ChatRoomSerializer
 from rest_framework_simplejwt.tokens import AccessToken
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
+from datetime import datetime
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+# Initialize Redis client
+redis_client = redis.Redis(
+    host=settings.REDIS_HOST,
+    port=settings.REDIS_PORT,
+    db=settings.REDIS_DB,
+    decode_responses=True
+)
 
 class BaseChatConsumer(AsyncWebsocketConsumer):
     async def connect(self, is_group=False):
@@ -63,17 +75,31 @@ class BaseChatConsumer(AsyncWebsocketConsumer):
         return user, chat_room
 
     @database_sync_to_async
-    def create_message(self, sender, chat, content, message_type, attachment_url=None, forwarded_from=None):
-        message = ChatMessage.objects.create(
-            sender=sender,
-            chat=chat,
-            content=content,
-            message_type=message_type,
-            attachment_url=attachment_url,
-            forwarded_from=forwarded_from
-        )
-        message.delivered_to.add(*chat.members.all())
-        return message
+    def create_message(self, sender, chat, content, message_type, attachment_url=None, forwarded_from=None, timestamp=None):
+        # If timestamp is provided (from client), use it; otherwise, use current time
+        timestamp = timestamp or timezone.now()
+        try:
+            message = ChatMessage.objects.create(
+                sender=sender,
+                chat=chat,
+                content=content,
+                message_type=message_type,
+                attachment_url=attachment_url,
+                forwarded_from=forwarded_from,
+                timestamp=timestamp
+            )
+            message.delivered_to.add(*chat.members.all())
+            return message
+        except IntegrityError:
+            # If a duplicate is detected, fetch the existing message
+            existing_message = ChatMessage.objects.get(
+                chat=chat,
+                sender=sender,
+                content=content,
+                message_type=message_type,
+                timestamp=timestamp
+            )
+            return existing_message
 
     @database_sync_to_async
     def serialize_message(self, message):
@@ -81,6 +107,16 @@ class BaseChatConsumer(AsyncWebsocketConsumer):
 
     async def send_ack(self, client_id, server_id):
         await self.send(json.dumps({"type": "ack", "messageId": client_id, "serverId": server_id}))
+
+    async def has_processed_message(self, message_id, user_id):
+        key = f"chat:{self.chat_id}:user:{user_id}:processed_messages"
+        return redis_client.sismember(key, message_id)
+
+    async def mark_message_processed(self, message_id, user_id):
+        key = f"chat:{self.chat_id}:user:{user_id}:processed_messages"
+        redis_client.sadd(key, message_id)
+        # Set an expiration time (e.g., 1 hour) to clean up Redis
+        redis_client.expire(key, 3600)
 
 class ChatConsumer(BaseChatConsumer):
     async def connect(self):
@@ -110,14 +146,31 @@ class ChatConsumer(BaseChatConsumer):
         message_type = data.get("message_type", "text")
         if message_type not in ["text", "image", "video", "file"]:
             return await self.send_error("Invalid message type", 4000)
+
+        # Parse timestamp from client, if provided
+        timestamp_str = data.get("timestamp")
+        timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00")) if timestamp_str else None
+
+        # Check if a message with the same client-side ID has already been processed
+        client_id = data.get("id")
+        if client_id and await self.has_processed_message(client_id, self.user.id):
+            logger.info(f"Message with client ID {client_id} already processed, skipping")
+            return
+
         message = await self.create_message(
             sender=self.user,
             chat=self.chat_room,
             content=data.get("content", ""),
             message_type=message_type,
-            attachment_url=data.get("attachment_url")
+            attachment_url=data.get("attachment_url"),
+            timestamp=timestamp
         )
         message_data = await self.serialize_message(message)
+
+        # Mark the message as processed for this user
+        if client_id:
+            await self.mark_message_processed(client_id, self.user.id)
+
         await self.channel_layer.group_send(
             self.chat_group_name,
             {"type": "chat.message", "message": message_data}
@@ -177,7 +230,13 @@ class ChatConsumer(BaseChatConsumer):
             await self.send_error("Message not found", 4004)
 
     async def chat_message(self, event):
-        await self.send(json.dumps({"message": event["message"]}))
+        message = event["message"]
+        # Check if the message has already been processed for this user
+        if await self.has_processed_message(message["id"], self.user.id):
+            logger.info(f"Message {message['id']} already processed for user {self.user.id}, skipping")
+            return
+        await self.mark_message_processed(message["id"], self.user.id)
+        await self.send(json.dumps({"message": message}))
 
     async def chat_typing(self, event):
         await self.send(json.dumps({"type": "typing", "user": event["user"], "username": event["username"]}))
@@ -215,14 +274,31 @@ class GroupChatConsumer(BaseChatConsumer):
         message_type = data.get("message_type", "text")
         if message_type not in ["text", "image", "video", "file"]:
             return await self.send_error("Invalid message type", 4000)
+
+        # Parse timestamp from client, if provided
+        timestamp_str = data.get("timestamp")
+        timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00")) if timestamp_str else None
+
+        # Check if a message with the same client-side ID has already been processed
+        client_id = data.get("id")
+        if client_id and await self.has_processed_message(client_id, self.user.id):
+            logger.info(f"Message with client ID {client_id} already processed, skipping")
+            return
+
         message = await self.create_message(
             sender=self.user,
             chat=self.chat_room,
             content=data.get("content", ""),
             message_type=message_type,
-            attachment_url=data.get("attachment_url")
+            attachment_url=data.get("attachment_url"),
+            timestamp=timestamp
         )
         message_data = await self.serialize_message(message)
+
+        # Mark the message as processed for this user
+        if client_id:
+            await self.mark_message_processed(client_id, self.user.id)
+
         await self.channel_layer.group_send(
             self.chat_group_name,
             {"type": "group_chat.message", "message": message_data}
@@ -331,7 +407,13 @@ class GroupChatConsumer(BaseChatConsumer):
             await self.send_error("Permission denied or user not found", 4004)
 
     async def group_chat_message(self, event):
-        await self.send(json.dumps({"message": event["message"]}))
+        message = event["message"]
+        # Check if the message has already been processed for this user
+        if await self.has_processed_message(message["id"], self.user.id):
+            logger.info(f"Message {message['id']} already processed for user {self.user.id}, skipping")
+            return
+        await self.mark_message_processed(message["id"], self.user.id)
+        await self.send(json.dumps({"message": message}))
 
     async def group_chat_typing(self, event):
         await self.send(json.dumps({"type": "typing", "user": event["user"], "username": event["username"]}))
