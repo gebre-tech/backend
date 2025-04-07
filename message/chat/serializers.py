@@ -17,13 +17,14 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     delivered_to = UserSerializer(many=True, read_only=True)
     forwarded_from = 'self'
     chat = serializers.PrimaryKeyRelatedField(queryset=ChatRoom.objects.all())
+    attachment = serializers.FileField(required=False, allow_null=True)
 
     class Meta:
         model = ChatMessage
         fields = [
             'id', 'sender', 'chat', 'content', 'message_type', 'attachment', 'attachment_url',
             'timestamp', 'edited_at', 'is_deleted', 'forwarded_from', 'seen_by_details',
-            'delivered_to', 'reactions'  # Added reactions
+            'delivered_to', 'reactions'
         ]
         read_only_fields = ['sender', 'timestamp', 'edited_at', 'is_deleted', 'seen_by_details', 'delivered_to']
 

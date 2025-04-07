@@ -11,6 +11,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from datetime import datetime
+from django.utils import timezone
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -426,3 +427,58 @@ class GroupChatConsumer(BaseChatConsumer):
 
     async def group_chat_update(self, event):
         await self.send(json.dumps({"type": "group_update", "chat": event["chat"]}))
+class GlobalChatConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        token = (
+            self.scope["query_string"].decode().split("token=")[1]
+            if "token=" in self.scope["query_string"].decode()
+            else None
+        )
+
+        if not token:
+            await self.send_error("No token provided", 4001)
+            return
+
+        try:
+            access_token = AccessToken(token)
+            user_id = access_token["user_id"]
+            self.user = await self.get_user(user_id)
+        except Exception as e:
+            await self.send_error(
+                str(e), 4003 if isinstance(e, AccessToken.TokenError) else 5000
+            )
+            return
+
+        self.global_group_name = "global_chat"
+        await self.channel_layer.group_add(self.global_group_name, self.channel_name)
+        await self.accept()
+        logger.info(f"User {self.user.username} connected to global chat")
+
+    async def disconnect(self, close_code):
+        if hasattr(self, "global_group_name"):
+            await self.channel_layer.group_discard(self.global_group_name, self.channel_name)
+        logger.info(f"Disconnected from global chat with code {close_code}")
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+            if data.get("type") == "ping":
+                await self.send(json.dumps({"type": "pong"}))
+            else:
+                logger.warn(f"Unknown message type in global chat: {data.get('type')}")
+        except json.JSONDecodeError:
+            await self.send_error("Invalid JSON", 4000)
+        except Exception as e:
+            logger.error(f"Error in global chat receive: {str(e)}")
+            await self.send_error("Server error", 5000)
+
+    async def send_error(self, message, code):
+        await self.send(json.dumps({"error": message}))
+        await self.close(code=code)
+
+    @database_sync_to_async
+    def get_user(self, user_id):
+        return User.objects.get(id=user_id)
+
+    async def global_message(self, event):
+        await self.send(json.dumps({"message": event["message"]}))

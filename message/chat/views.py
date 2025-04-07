@@ -1,10 +1,9 @@
-# chat/views.py
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
-from .models import ChatRoom, ChatMessage
+from .models import ChatRoom, ChatMessage, MessageSeen  # Add MessageSeen import
 from .serializers import ChatRoomSerializer, ChatMessageSerializer
 from django.core.files.storage import FileSystemStorage
 from django.conf import settings
@@ -15,65 +14,13 @@ import os
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from .models import ChatRoom, ChatMessage
-from .serializers import ChatRoomSerializer, ChatMessageSerializer
-from django.contrib.auth.models import User
-
-class ChatProfileView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, chat_id):
-        try:
-            chat_room = ChatRoom.objects.get(id=chat_id)
-            if not chat_room.members.filter(id=request.user.id).exists():
-                return Response({"error": "You are not a member of this chat"}, status=status.HTTP_403_FORBIDDEN)
-
-            serializer = ChatRoomSerializer(chat_room, context={'request': request})
-            data = serializer.data
-
-            # Add additional fields for one-on-one chats
-            if not chat_room.is_group:
-                other_member = chat_room.members.exclude(id=request.user.id).first()
-                if other_member:
-                    data["user"] = {
-                        "id": str(other_member.id),
-                        "first_name": other_member.first_name,
-                        "username": other_member.username,
-                        "profile_picture": other_member.profile_picture.url if other_member.profile_picture else None,
-                    }
-                    data["is_online"] = is_user_online(other_member.last_seen)  # Implement this function
-                    data["last_seen"] = other_member.last_seen.isoformat() if other_member.last_seen else None
-                    data["profile_picture"] = other_member.profile_picture.url if other_member.profile_picture else None
-
-            # Add pinned message
-            pinned_message = chat_room.messages.filter(isPinned=True).first()
-            if pinned_message:
-                data["pinned_message"] = ChatMessageSerializer(pinned_message).data
-
-            return Response(data, status=status.HTTP_200_OK)
-        except ChatRoom.DoesNotExist:
-            return Response({"error": "Chat not found"}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-# Helper function to determine if a user is online
-def is_user_online(last_seen):
-    from datetime import datetime, timedelta
-    if not last_seen:
-        return False
-    now = datetime.utcnow().replace(tzinfo=last_seen.tzinfo)
-    return (now - last_seen) < timedelta(minutes=5)
-
 class SendMessageView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         logger.info("Entering SendMessageView.post")
         receiver_id = request.data.get("receiver_id")
+        logger.info(f"Received receiver_id: {receiver_id}")
         content = request.data.get("content", "")
         message_type = request.data.get("message_type", "text")
         attachment_url = request.data.get("attachment_url")
@@ -91,6 +38,7 @@ class SendMessageView(APIView):
             chat_room = None
             if receiver_id:
                 receiver = User.objects.get(id=receiver_id)
+                logger.info(f"Found receiver: {receiver.username}")
                 chat_room = ChatRoom.objects.filter(
                     is_group=False, members=request.user
                 ).filter(members=receiver).first()
@@ -146,6 +94,41 @@ class GetMessagesView(APIView):
             logger.error(f"Error in GetMessagesView: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+class MarkAsReadBatchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        message_ids = request.data.get("message_ids", [])
+        logger.info(f"Received message_ids: {message_ids}")
+        if not message_ids:
+            return Response({"error": "No message IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            # Validate message_ids
+            message_ids = [int(mid) for mid in message_ids]
+        except (ValueError, TypeError):
+            logger.error(f"Invalid message IDs: {message_ids}")
+            return Response({"error": "Invalid message IDs"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            # Only fetch messages that the user hasn't already seen
+            messages = ChatMessage.objects.filter(
+                id__in=message_ids,
+                chat__members=request.user
+            ).exclude(seen_by=request.user)
+            logger.info(f"Found {messages.count()} unread messages for message_ids: {message_ids}")
+            if not messages.exists():
+                return Response({"error": "No valid unread messages found"}, status=status.HTTP_404_NOT_FOUND)
+            for message in messages:
+                logger.info(f"Marking message {message.id} as read for user {request.user.username}")
+                MessageSeen.objects.get_or_create(user=request.user, message=message)
+            logger.info(f"Messages {message_ids} marked as read by {request.user.username}")
+            return Response({"status": "Messages marked as read"}, status=status.HTTP_200_OK)
+        except ChatMessage.DoesNotExist:
+            logger.error(f"One or more messages not found for message_ids: {message_ids}")
+            return Response({"error": "One or more messages not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error in MarkAsReadBatchView: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class MarkAsReadView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -162,26 +145,6 @@ class MarkAsReadView(APIView):
         except Exception as e:
             logger.error(f"Error in MarkAsReadView: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-class MarkAsReadBatchView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        message_ids = request.data.get("message_ids", [])
-        if not message_ids:
-            return Response({"error": "No message IDs provided"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            messages = ChatMessage.objects.filter(id__in=message_ids, chat__members=request.user)
-            if not messages.exists():
-                return Response({"error": "No valid messages found"}, status=status.HTTP_404_NOT_FOUND)
-            for message in messages:
-                message.seen_by.add(request.user)
-            logger.info(f"Messages {message_ids} marked as read by {request.user.username}")
-            return Response({"status": "Messages marked as read"}, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error in MarkAsReadBatchView: {str(e)}")
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 class ReactToMessageView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -220,33 +183,30 @@ class UploadAttachmentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, chat_id):
+        logger.info(f"Received request for chat {chat_id} by {request.user.username}")
         file = request.FILES.get("file")
         if not file:
-            logger.error("No file uploaded in UploadAttachmentView")
+            logger.error(f"No file found in request.FILES: {request.FILES}, Data: {request.data}")
             return Response({"error": "No file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
         try:
             chat_room = ChatRoom.objects.get(id=chat_id, members=request.user)
-            fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, "uploads"))
-            filename = fs.save(file.name, file)
-            file_url = request.build_absolute_uri(fs.url(filename))
-            logger.info(f"Uploaded attachment {filename} for chat {chat_id}")
-            # Create a message with the attachment
             message_type = 'image' if file.name.split('.')[-1].lower() in ['jpg', 'jpeg', 'png'] else 'file'
             message = ChatMessage(
                 sender=request.user,
                 chat=chat_room,
                 message_type=message_type,
-                attachment_url=file_url
+                attachment=file  # Save the file to the attachment field
             )
             message.save()
             message.delivered_to.add(*chat_room.members.all())
             serializer = ChatMessageSerializer(message, context={'request': request})
+            logger.info(f"Uploaded attachment {file.name} for chat {chat_id}")
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except ChatRoom.DoesNotExist:
-            logger.error(f"Chat room {chat_id} not found for upload_attachment")
+            logger.error(f"Chat room {chat_id} not found for user {request.user.username}")
             return Response({"error": "Chat not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            logger.error(f"Error in UploadAttachmentView: {str(e)}")
+            logger.error(f"Error in UploadAttachmentView: {str(e)}", exc_info=True)
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(["POST"])

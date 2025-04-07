@@ -1,7 +1,7 @@
 # chat/urls.py
 from django.urls import path
 from . import views
-from .views import ChatProfileView, GetMessagesView, UploadAttachmentView, MarkAsReadBatchView, ReactToMessageView
+from .views import  GetMessagesView, UploadAttachmentView, MarkAsReadBatchView, ReactToMessageView
 
 urlpatterns = [
     path('send-message/', views.SendMessageView.as_view(), name='send-message'),
@@ -15,6 +15,6 @@ urlpatterns = [
     path('delete-message/<int:message_id>/', views.delete_message, name='delete-message'),
     path('pin-message/<int:chat_id>/<int:message_id>/', views.pin_message, name='pin-message'),
     path('manage-group-member/<int:chat_id>/', views.manage_group_member, name='manage-group-member'),
-    path('profile/<str:chat_id>/', ChatProfileView.as_view(), name='chat-profile'),
     path('react-to-message/<int:message_id>/', ReactToMessageView.as_view(), name='react-to-message'),
+
 ]
