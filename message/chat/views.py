@@ -179,26 +179,44 @@ class ChatRoomListView(APIView):
             logger.error(f"Error in ChatRoomListView: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+from django.core.exceptions import ValidationError
+import mimetypes
+
 class UploadAttachmentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, chat_id):
-        logger.info(f"Received request for chat {chat_id} by {request.user.username}")
+        logger.info(f"Received upload request for chat {chat_id} by {request.user.username}")
+        logger.info(f"Request FILES: {request.FILES}")
+        logger.info(f"Request DATA: {request.data}")
         file = request.FILES.get("file")
+        content = request.data.get("content", "")
+
         if not file:
-            logger.error(f"No file found in request.FILES: {request.FILES}, Data: {request.data}")
+            logger.error("No file provided in request")
             return Response({"error": "No file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+
+        max_size = 100 * 1024 * 1024  # 100MB
+        if file.size > max_size:
+            logger.error(f"File size {file.size} exceeds limit {max_size}")
+            return Response({"error": "File size exceeds 100MB limit"}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             chat_room = ChatRoom.objects.get(id=chat_id, members=request.user)
-            message_type = 'image' if file.name.split('.')[-1].lower() in ['jpg', 'jpeg', 'png'] else 'file'
+            mime_type, _ = mimetypes.guess_type(file.name)
+            if not mime_type:
+                mime_type = file.content_type if hasattr(file, 'content_type') else 'application/octet-stream'
+
             message = ChatMessage(
                 sender=request.user,
                 chat=chat_room,
-                message_type=message_type,
-                attachment=file  # Save the file to the attachment field
+                content=content,
+                attachment=file,
+                message_type='file',
             )
             message.save()
             message.delivered_to.add(*chat_room.members.all())
+
             serializer = ChatMessageSerializer(message, context={'request': request})
             logger.info(f"Uploaded attachment {file.name} for chat {chat_id}")
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -207,9 +225,7 @@ class UploadAttachmentView(APIView):
             return Response({"error": "Chat not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Error in UploadAttachmentView: {str(e)}", exc_info=True)
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-@api_view(["POST"])
+            return Response({"error": f"Upload failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def create_group_chat(request):
     name = request.data.get("name")

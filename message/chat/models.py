@@ -3,6 +3,7 @@ from django.db import models
 from django.conf import settings
 from django.db import IntegrityError
 from django.utils import timezone
+import mimetypes
 
 class ChatRoom(models.Model):
     name = models.CharField(max_length=255, blank=True)
@@ -46,47 +47,106 @@ class ChatMessage(models.Model):
         ('image', 'Image'),
         ('video', 'Video'),
         ('audio', 'Audio'),
-        ('file', 'File'),
+        ('file', 'File'),  # Generic file type for PDFs, docs, etc.
         ('system', 'System'),
     )
     
     sender = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='sent_messages'
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='sent_messages'
     )
-    chat = models.ForeignKey(ChatRoom, on_delete=models.CASCADE, related_name='messages')
+    chat = models.ForeignKey(
+        'ChatRoom',
+        on_delete=models.CASCADE,
+        related_name='messages'
+    )
     content = models.TextField(blank=True, null=True)
-    message_type = models.CharField(max_length=10, choices=MESSAGE_TYPES, default='text')
-    attachment = models.FileField(
-        upload_to="chat_attachments/%Y/%m/%d/", blank=True, null=True
+    message_type = models.CharField(
+        max_length=10,
+        choices=MESSAGE_TYPES,
+        default='text'
     )
-    attachment_url = models.URLField(blank=True, null=True)
-    timestamp = models.DateTimeField(auto_now_add=True)
+    attachment = models.FileField(
+        upload_to="chat_attachments/%Y/%m/%d/",
+        blank=True,
+        null=True
+    )
+    attachment_mime_type = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True
+    )  # Store MIME type
+    attachment_size = models.PositiveBigIntegerField(
+        null=True,
+        blank=True
+    )  # Store file size in bytes, using BigInteger for larger files
+    attachment_url = models.URLField(
+        blank=True,
+        null=True
+    )
+    attachment_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True
+    )  # Store original file name
+    timestamp = models.DateTimeField(default=timezone.now)
     edited_at = models.DateTimeField(null=True, blank=True)
     is_deleted = models.BooleanField(default=False)
     forwarded_from = models.ForeignKey(
-        'self', null=True, blank=True, on_delete=models.SET_NULL, related_name='forwards'
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='forwards'
     )
     seen_by = models.ManyToManyField(
-        settings.AUTH_USER_MODEL, related_name="seen_messages", blank=True, through='MessageSeen'
+        settings.AUTH_USER_MODEL,
+        related_name="seen_messages",
+        blank=True,
+        through='MessageSeen'
     )
     delivered_to = models.ManyToManyField(
-        settings.AUTH_USER_MODEL, related_name="delivered_messages", blank=True
+        settings.AUTH_USER_MODEL,
+        related_name="delivered_messages",
+        blank=True
     )
     reactions = models.JSONField(default=list, blank=True)
 
     class Meta:
         ordering = ['timestamp']
-        # Add unique constraint to prevent duplicates
         unique_together = ('chat', 'sender', 'content', 'message_type', 'timestamp')
 
     def save(self, *args, **kwargs):
-        if self.attachment and not self.attachment_url:
-            from django.conf import settings
-            self.attachment_url = f"{settings.MEDIA_URL}{self.attachment.name}"
+        if self.attachment:
+            # Generate attachment_url
+            self.attachment_url = self.attachment.url
+            # Store original file name
+            if not self.attachment_name:
+                self.attachment_name = self.attachment.name.split('/')[-1]
+            # Determine MIME type
+            mime_type, _ = mimetypes.guess_type(self.attachment_name)
+            self.attachment_mime_type = (
+                mime_type or
+                getattr(self.attachment.file, 'content_type', 'application/octet-stream')
+            )
+            # Store file size
+            self.attachment_size = self.attachment.size
+            # Set message_type based on MIME type if not explicitly set
+            if not self.message_type or self.message_type == 'text':
+                mime = self.attachment_mime_type.lower()
+                if mime.startswith('image/'):
+                    self.message_type = 'image'
+                elif mime.startswith('video/'):
+                    self.message_type = 'video'
+                elif mime.startswith('audio/'):
+                    self.message_type = 'audio'
+                else:
+                    self.message_type = 'file'
         try:
             super().save(*args, **kwargs)
         except IntegrityError:
-            # If a duplicate is detected, fetch the existing message
+            # Handle duplicate message
             existing_message = ChatMessage.objects.get(
                 chat=self.chat,
                 sender=self.sender,
@@ -111,7 +171,6 @@ class ChatMessage(models.Model):
 
     def __str__(self):
         return f"{self.sender.username}: {self.content or self.message_type} in {self.chat}"
-
 class MessageSeen(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     message = models.ForeignKey(ChatMessage, on_delete=models.CASCADE)

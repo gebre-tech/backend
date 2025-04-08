@@ -273,15 +273,13 @@ class GroupChatConsumer(BaseChatConsumer):
 
     async def handle_message(self, data):
         message_type = data.get("message_type", "text")
-        if message_type not in ["text", "image", "video", "file"]:
+        if message_type not in ["text", "image", "video", "audio", "file"]:
             return await self.send_error("Invalid message type", 4000)
 
-        # Parse timestamp from client, if provided
         timestamp_str = data.get("timestamp")
         timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00")) if timestamp_str else None
-
-        # Check if a message with the same client-side ID has already been processed
         client_id = data.get("id")
+
         if client_id and await self.has_processed_message(client_id, self.user.id):
             logger.info(f"Message with client ID {client_id} already processed, skipping")
             return
@@ -296,16 +294,15 @@ class GroupChatConsumer(BaseChatConsumer):
         )
         message_data = await self.serialize_message(message)
 
-        # Mark the message as processed for this user
         if client_id:
             await self.mark_message_processed(client_id, self.user.id)
 
         await self.channel_layer.group_send(
             self.chat_group_name,
-            {"type": "group_chat.message", "message": message_data}
+            {"type": "chat.message" if not self.chat_room.is_group else "group_chat.message", "message": message_data}
         )
-        if data.get("id"):
-            await self.send_ack(data["id"], str(message.id))
+        if client_id:
+            await self.send_ack(client_id, str(message.id))
 
     async def handle_edit(self, data):
         message_id, content = data.get("message_id"), data.get("content")
