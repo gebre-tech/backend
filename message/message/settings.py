@@ -186,7 +186,12 @@ DEFAULT_FROM_EMAIL = 'noreply@yourapp.com'
 
 # CORS Settings
 CORS_ALLOW_ALL_ORIGINS = True
-ALLOWED_HOSTS = ['192.168.137.1', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = [
+    '192.168.137.1',
+    '10.0.2.2',
+    'localhost',
+    '127.0.0.1',
+]
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
@@ -222,7 +227,7 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
-SITE_URL = 'http://127.0.0.1:8000'
+SITE_URL = 'http://192.168.137.1:8000'
 # Static & Media Files
 STATIC_URL = '/static/'
 MEDIA_URL = '/media/'
