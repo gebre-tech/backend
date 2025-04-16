@@ -41,17 +41,14 @@ class ChatMessageSerializer(serializers.ModelSerializer):
         ]
 
     def get_attachment_url(self, obj):
-        if obj.attachment_url:
-            if obj.attachment_url.startswith(('http://', 'https://')):
-                return obj.attachment_url
-            # Ensure absolute URL for local media
-            request = self.context.get('request')
-            base_url = request.build_absolute_uri('/')[:-1] if request else settings.SITE_URL.rstrip('/')
-            return f"{base_url}{obj.attachment_url}"
+        # Use obj.attachment.url directly instead of obj.attachment_url
+        if obj.attachment and hasattr(obj.attachment, 'url'):
+            base_url = settings.SITE_URL.rstrip('/')  # e.g., 'http://127.0.0.1:8000'
+            relative_url = obj.attachment.url  # e.g., '/media/chat_attachments/2025/04/16/filename.jpg'
+            return f"{base_url}{relative_url}"
         return None
 
     def get_seen_by_details(self, obj):
-        # Optimize by prefetching related data
         seen_by = obj.messageseen_set.all()
         return MessageSeenSerializer(seen_by, many=True, read_only=True).data
 
@@ -62,11 +59,9 @@ class ChatMessageSerializer(serializers.ModelSerializer):
 
     def validate_attachment(self, value):
         if value:
-            # Validate file size (e.g., max 100MB)
             max_size = 100 * 1024 * 1024  # 100MB
             if value.size > max_size:
                 raise serializers.ValidationError(f"File size exceeds {max_size / (1024 * 1024)}MB limit")
-            # Validate file type (optional, based on allowed MIME types)
             allowed_mime_types = [
                 'image/', 'video/', 'audio/', 'application/pdf',
                 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -95,10 +90,10 @@ class ChatMessageSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
-        # Ensure forwarded_from is serialized correctly
         if instance.forwarded_from:
             representation['forwarded_from'] = self.get_forwarded_from(instance)
         return representation
+
 class ChatMessageMiniSerializer(serializers.ModelSerializer):
     attachment_url = serializers.SerializerMethodField()
     attachment_name = serializers.CharField(read_only=True)
@@ -108,12 +103,10 @@ class ChatMessageMiniSerializer(serializers.ModelSerializer):
         fields = ['id', 'content', 'message_type', 'timestamp', 'attachment_url', 'attachment_name']
 
     def get_attachment_url(self, obj):
-        if obj.attachment_url:
-            if obj.attachment_url.startswith(('http://', 'https://')):
-                return obj.attachment_url
-            request = self.context.get('request')
-            base_url = request.build_absolute_uri('/')[:-1] if request else settings.SITE_URL.rstrip('/')
-            return f"{base_url}{obj.attachment_url}"
+        if obj.attachment and hasattr(obj.attachment, 'url'):
+            base_url = settings.SITE_URL.rstrip('/')
+            relative_url = obj.attachment.url
+            return f"{base_url}{relative_url}"
         return None
 
 class ChatRoomSerializer(serializers.ModelSerializer):

@@ -1,4 +1,5 @@
 # chat/models.py
+from venv import logger
 from django.db import models
 from django.conf import settings
 from django.db import IntegrityError
@@ -41,13 +42,14 @@ class ChatRoom(models.Model):
                 message_type="system"
             )
 
+# chat/models.py
 class ChatMessage(models.Model):
     MESSAGE_TYPES = (
         ('text', 'Text'),
         ('image', 'Image'),
         ('video', 'Video'),
         ('audio', 'Audio'),
-        ('file', 'File'),  # Generic file type for PDFs, docs, etc.
+        ('file', 'File'),
         ('system', 'System'),
     )
     
@@ -76,20 +78,20 @@ class ChatMessage(models.Model):
         max_length=100,
         blank=True,
         null=True
-    )  # Store MIME type
+    )
     attachment_size = models.PositiveBigIntegerField(
         null=True,
         blank=True
-    )  # Store file size in bytes, using BigInteger for larger files
+    )
     attachment_url = models.URLField(
         blank=True,
         null=True
-    )
+    )  # Keep for compatibility, but won't be used for URL generation
     attachment_name = models.CharField(
         max_length=255,
         blank=True,
         null=True
-    )  # Store original file name
+    )
     timestamp = models.DateTimeField(default=timezone.now)
     edited_at = models.DateTimeField(null=True, blank=True)
     is_deleted = models.BooleanField(default=False)
@@ -119,20 +121,14 @@ class ChatMessage(models.Model):
 
     def save(self, *args, **kwargs):
         if self.attachment:
-            # Generate attachment_url
-            self.attachment_url = self.attachment.url
-            # Store original file name
             if not self.attachment_name:
                 self.attachment_name = self.attachment.name.split('/')[-1]
-            # Determine MIME type
             mime_type, _ = mimetypes.guess_type(self.attachment_name)
             self.attachment_mime_type = (
                 mime_type or
                 getattr(self.attachment.file, 'content_type', 'application/octet-stream')
             )
-            # Store file size
             self.attachment_size = self.attachment.size
-            # Set message_type based on MIME type if not explicitly set
             if not self.message_type or self.message_type == 'text':
                 mime = self.attachment_mime_type.lower()
                 if mime.startswith('image/'):
@@ -146,7 +142,6 @@ class ChatMessage(models.Model):
         try:
             super().save(*args, **kwargs)
         except IntegrityError:
-            # Handle duplicate message
             existing_message = ChatMessage.objects.get(
                 chat=self.chat,
                 sender=self.sender,
@@ -155,6 +150,8 @@ class ChatMessage(models.Model):
                 timestamp=self.timestamp
             )
             return existing_message
+
+
 
     def unread_count(self, user):
         return self.chat.messages.exclude(seen_by=user).count()

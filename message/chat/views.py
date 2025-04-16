@@ -189,11 +189,33 @@ class UploadAttachmentView(APIView):
         logger.info(f"Received upload request for chat {chat_id} by {request.user.username}")
         logger.info(f"Request FILES: {request.FILES}")
         logger.info(f"Request DATA: {request.data}")
-        file = request.FILES.get("file")
+
+        # Check if file is in FILES (standard upload) or data (base64)
+        file = request.FILES.get('file')
         content = request.data.get("content", "")
+        
+        # Handle base64 upload
+        if not file and 'file' in request.data:
+            try:
+                from django.core.files.base import ContentFile
+                import base64
+                import uuid
+                
+                file_data = request.data['file']
+                if isinstance(file_data, str) and file_data.startswith('data:'):
+                    # Extract the base64 data
+                    format, imgstr = file_data.split(';base64,')
+                    ext = format.split('/')[-1]
+                    
+                    # Generate filename
+                    filename = f"{uuid.uuid4()}.{ext}"
+                    file = ContentFile(base64.b64decode(imgstr), name=filename)
+            except Exception as e:
+                logger.error(f"Error processing base64 file: {str(e)}")
+                return Response({"error": "Invalid file format"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not file:
-            logger.error("No file provided in request")
+            logger.error("No valid file provided in request")
             return Response({"error": "No file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
 
         max_size = 100 * 1024 * 1024  # 100MB
@@ -205,7 +227,7 @@ class UploadAttachmentView(APIView):
             chat_room = ChatRoom.objects.get(id=chat_id, members=request.user)
             mime_type, _ = mimetypes.guess_type(file.name)
             if not mime_type:
-                mime_type = file.content_type if hasattr(file, 'content_type') else 'application/octet-stream'
+                mime_type = getattr(file, 'content_type', 'application/octet-stream')
 
             message = ChatMessage(
                 sender=request.user,
@@ -225,7 +247,8 @@ class UploadAttachmentView(APIView):
             return Response({"error": "Chat not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Error in UploadAttachmentView: {str(e)}", exc_info=True)
-            return Response({"error": f"Upload failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)@api_view(["POST"])
+            return Response({"error": f"Upload failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 @permission_classes([IsAuthenticated])
 def create_group_chat(request):
     name = request.data.get("name")
