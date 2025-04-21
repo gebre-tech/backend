@@ -9,6 +9,7 @@ https://docs.djangoproject.com/en/5.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
+#message/message/settings.py
 import os
 from pathlib import Path
 from datetime import timedelta
@@ -98,7 +99,9 @@ if os.getenv("ENV") == "PRODUCTION":
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
             'CONFIG': {
-                "hosts": [('127.0.0.1', 6379)],
+                'hosts': [('127.0.0.1', 6379)],
+                'capacity': 1500,
+                'expiry': 10,
             },
         },
     }
@@ -148,7 +151,7 @@ db_params = {
 }
 
 
-REDIS_HOST = 'localhost'
+REDIS_HOST = '10.161.152.24'
 REDIS_PORT = 6379
 REDIS_DB = 0
 # Initialize the database connection pool
@@ -191,6 +194,7 @@ ALLOWED_HOSTS = [
     '10.0.2.2',
     'localhost',
     '127.0.0.1',
+    '10.161.152.24',
 ]
 
 # Password validation
@@ -227,11 +231,17 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
-SITE_URL = 'http://127.0.0.1:8000'
+SITE_URL = 'http://10.161.152.24:8000'
 # Static & Media Files
 STATIC_URL = '/static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# Increase the maximum size of the request body held in memory (default is 2.5MB)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600  # 100MB in bytes
+
+# Already set, but keeping for reference
+FILE_UPLOAD_MAX_MEMORY_SIZE = 104857600  # 100MB in bytes
 DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'  # Or use 'storages.backends.s3boto3.S3Boto3Storage' for S3
 
 # Default primary key field type

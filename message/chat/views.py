@@ -1,3 +1,5 @@
+# chat/views.py
+from django.core.exceptions import RequestDataTooBig
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -182,72 +184,82 @@ class ChatRoomListView(APIView):
 from django.core.exceptions import ValidationError
 import mimetypes
 
+
+
 class UploadAttachmentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, chat_id):
-        logger.info(f"Received upload request for chat {chat_id} by {request.user.username}")
-        logger.info(f"Request FILES: {request.FILES}")
-        logger.info(f"Request DATA: {request.data}")
-
-        # Check if file is in FILES (standard upload) or data (base64)
-        file = request.FILES.get('file')
-        content = request.data.get("content", "")
-        
-        # Handle base64 upload
-        if not file and 'file' in request.data:
-            try:
-                from django.core.files.base import ContentFile
-                import base64
-                import uuid
-                
-                file_data = request.data['file']
-                if isinstance(file_data, str) and file_data.startswith('data:'):
-                    # Extract the base64 data
-                    format, imgstr = file_data.split(';base64,')
-                    ext = format.split('/')[-1]
-                    
-                    # Generate filename
-                    filename = f"{uuid.uuid4()}.{ext}"
-                    file = ContentFile(base64.b64decode(imgstr), name=filename)
-            except Exception as e:
-                logger.error(f"Error processing base64 file: {str(e)}")
-                return Response({"error": "Invalid file format"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not file:
-            logger.error("No valid file provided in request")
-            return Response({"error": "No file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
-
-        max_size = 100 * 1024 * 1024  # 100MB
-        if file.size > max_size:
-            logger.error(f"File size {file.size} exceeds limit {max_size}")
-            return Response({"error": "File size exceeds 100MB limit"}, status=status.HTTP_400_BAD_REQUEST)
-
         try:
-            chat_room = ChatRoom.objects.get(id=chat_id, members=request.user)
-            mime_type, _ = mimetypes.guess_type(file.name)
-            if not mime_type:
-                mime_type = getattr(file, 'content_type', 'application/octet-stream')
+            logger.info(f"Received upload request for chat {chat_id} by {request.user.username}")
+            logger.info(f"Request FILES: {request.FILES}")
+            logger.info(f"Request DATA: {request.data}")
 
-            message = ChatMessage(
-                sender=request.user,
-                chat=chat_room,
-                content=content,
-                attachment=file,
-                message_type='file',
+            # Check if file is in FILES (standard upload) or data (base64)
+            file = request.FILES.get('file')
+            content = request.data.get("content", "")
+            
+            # Handle base64 upload
+            if not file and 'file' in request.data:
+                try:
+                    from django.core.files.base import ContentFile
+                    import base64
+                    import uuid
+                    
+                    file_data = request.data['file']
+                    if isinstance(file_data, str) and file_data.startswith('data:'):
+                        # Extract the base64 data
+                        format, imgstr = file_data.split(';base64,')
+                        ext = format.split('/')[-1]
+                        
+                        # Generate filename
+                        filename = f"{uuid.uuid4()}.{ext}"
+                        file = ContentFile(base64.b64decode(imgstr), name=filename)
+                except Exception as e:
+                    logger.error(f"Error processing base64 file: {str(e)}")
+                    return Response({"error": "Invalid file format"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not file:
+                logger.error("No valid file provided in request")
+                return Response({"error": "No file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+
+            max_size = 100 * 1024 * 1024  # 100MB
+            if file.size > max_size:
+                logger.error(f"File size {file.size} exceeds limit {max_size}")
+                return Response({"error": "File size exceeds 100MB limit"}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                chat_room = ChatRoom.objects.get(id=chat_id, members=request.user)
+                mime_type, _ = mimetypes.guess_type(file.name)
+                if not mime_type:
+                    mime_type = getattr(file, 'content_type', 'application/octet-stream')
+
+                message = ChatMessage(
+                    sender=request.user,
+                    chat=chat_room,
+                    content=content,
+                    attachment=file,
+                    message_type='file',
+                )
+                message.save()
+                message.delivered_to.add(*chat_room.members.all())
+
+                serializer = ChatMessageSerializer(message, context={'request': request})
+                logger.info(f"Uploaded attachment {file.name} for chat {chat_id}")
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            except ChatRoom.DoesNotExist:
+                logger.error(f"Chat room {chat_id} not found for user {request.user.username}")
+                return Response({"error": "Chat not found"}, status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                logger.error(f"Error in UploadAttachmentView: {str(e)}", exc_info=True)
+                return Response({"error": f"Upload failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        except RequestDataTooBig:
+            logger.error("Request body exceeded DATA_UPLOAD_MAX_MEMORY_SIZE")
+            return Response(
+                {"error": "File size too large. Maximum allowed is 100MB."},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
             )
-            message.save()
-            message.delivered_to.add(*chat_room.members.all())
-
-            serializer = ChatMessageSerializer(message, context={'request': request})
-            logger.info(f"Uploaded attachment {file.name} for chat {chat_id}")
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        except ChatRoom.DoesNotExist:
-            logger.error(f"Chat room {chat_id} not found for user {request.user.username}")
-            return Response({"error": "Chat not found"}, status=status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            logger.error(f"Error in UploadAttachmentView: {str(e)}", exc_info=True)
-            return Response({"error": f"Upload failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @permission_classes([IsAuthenticated])
 def create_group_chat(request):
