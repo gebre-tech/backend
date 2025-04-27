@@ -61,7 +61,9 @@ INSTALLED_APPS = [
     'redis',
 ] 
 
+
 MIDDLEWARE = [
+    #'django.middleware.gzip.GZipMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -70,6 +72,8 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'corsheaders.middleware.CorsMiddleware',  # Enable CORS
+    #'silk.middleware.SilkyMiddleware',  Silk before GZip
+    
 ]
 
 ROOT_URLCONF = 'message.urls'
@@ -90,27 +94,28 @@ TEMPLATES = [
     },
 ]
 
+
+# INSTALLED_APPS += ['rest_framework.throttling']
+# INSTALLED_APPS += ['silk']  # Add Silk to installed apps
+ # Add Django Extensions to installed apps
+
+
 WSGI_APPLICATION = 'message.wsgi.application'
 # Channels for WebSockets
 ASGI_APPLICATION = "message.asgi.application"
 
-if os.getenv("ENV") == "PRODUCTION":
-    CHANNEL_LAYERS = {
-        'default': {
+# Channels settings
+CHANNEL_LAYERS = {
+      'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
             'CONFIG': {
-                'hosts': [('127.0.0.1', 6379)],
+                'hosts': [('10.161.152.32', 6379)],
                 'capacity': 1500,
                 'expiry': 10,
             },
         },
     }
-else:
-    CHANNEL_LAYERS = {
-        "default": {
-            "BACKEND": "channels.layers.InMemoryChannelLayer",
-        },
-    }
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -151,9 +156,20 @@ db_params = {
 }
 
 
-REDIS_HOST = '10.161.152.24'
+REDIS_HOST = '10.161.152.32'
 REDIS_PORT = 6379
 REDIS_DB = 0
+
+# Add caching configuration
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': f'redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}',
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        }
+    }
+}
 # Initialize the database connection pool
 db_pool = pool.ThreadedConnectionPool(1, 20, **db_params)
 
@@ -169,6 +185,17 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 }
+
+"""
+REST_FRAMEWORK.update({
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'user': '100/minute',  # 100 requests per minute per user
+    },
+})
+"""
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(days=1),
@@ -194,7 +221,7 @@ ALLOWED_HOSTS = [
     '10.0.2.2',
     'localhost',
     '127.0.0.1',
-    '10.161.152.24',
+    '10.161.152.32',
 ]
 
 # Password validation
@@ -231,7 +258,7 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
-SITE_URL = 'http://10.161.152.24:8000'
+SITE_URL = 'http://10.161.152.32:8000'
 # Static & Media Files
 STATIC_URL = '/static/'
 MEDIA_URL = '/media/'
@@ -248,3 +275,4 @@ DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'  # Or use '
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+

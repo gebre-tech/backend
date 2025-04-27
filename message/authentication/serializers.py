@@ -7,14 +7,15 @@ from rest_framework_simplejwt.tokens import RefreshToken
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name']
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'public_key']  # Added public_key
 
 class RegisterSerializer(serializers.ModelSerializer):
     password2 = serializers.CharField(write_only=True)
+    public_key = serializers.CharField(max_length=64, required=True)  # New field for public key
 
     class Meta:
         model = User
-        fields = ['username', 'first_name', 'last_name', 'email', 'password', 'password2']
+        fields = ['username', 'first_name', 'last_name', 'email', 'password', 'password2', 'public_key']
         extra_kwargs = {'password': {'write_only': True}}
 
     def validate_username(self, value):
@@ -49,6 +50,11 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Enter a valid email address.")
         return value
 
+    def validate_public_key(self, value):
+        if not value or len(value) != 64 or not re.match(r'^[0-9a-fA-F]+$', value):
+            raise serializers.ValidationError("Public key must be a 64-character hexadecimal string.")
+        return value
+
     def validate(self, data):
         if data['password'] != data['password2']:
             raise serializers.ValidationError({"password2": "Passwords do not match."})
@@ -60,7 +66,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             email=validated_data['email'],
             first_name=validated_data['first_name'],
             last_name=validated_data['last_name'],
-            password=validated_data['password']
+            password=validated_data['password'],
+            public_key=validated_data['public_key']
         )
         return user
 

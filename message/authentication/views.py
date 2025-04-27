@@ -29,7 +29,16 @@ class UserProfileView(APIView):
     def get(self, request):
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
-    
+
+
+class UserPublicKeyView(APIView):
+    def get(self, request, user_id):
+        try:
+            user = User.objects.get(id=user_id)
+            return Response({"public_key": user.public_key}, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
 class ForgotPasswordView(APIView):
     def post(self, request):
         email = request.data.get('email')

@@ -57,6 +57,7 @@ class SearchContactsView(APIView):
             logger.error(f"Error in SearchContactsView: {str(e)}")
             return Response({"error": f"Failed to search contacts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+# contacts/views.py
 class SearchUsersView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -66,9 +67,15 @@ class SearchUsersView(APIView):
             if not query:
                 return Response({"error": "Query parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
 
+            # Search across username, email, first_name, and full name (first_name + last_name)
             users = User.objects.filter(
-                Q(username__icontains=query) | Q(email__icontains=query)
-            ).exclude(id=request.user.id).select_related('profile')
+                Q(username__icontains=query) |  # Search by username
+                Q(email__icontains=query) |     # Search by email
+                Q(first_name__icontains=query) |  # Search by first_name
+                Q(last_name__icontains=query) |   # Search by last_name
+                Q(first_name__icontains=query.split()[0]) & Q(last_name__icontains=query.split()[-1]) if ' ' in query else Q()  # Search by full name
+            ).exclude(id=request.user.id).select_related('profile').distinct()
+
             return paginate_queryset(users, request, UserSerializer)
         except Exception as e:
             logger.error(f"Error in SearchUsersView: {str(e)}")
@@ -144,6 +151,7 @@ class GetContactsWithProfilesView(APIView):
             logger.error(f"Error in GetContactsWithProfilesView: {str(e)}")
             return Response({"error": f"Failed to fetch contacts with profiles: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+# contacts/views.py
 class SendFriendRequestView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -157,11 +165,20 @@ class SendFriendRequestView(APIView):
             if receiver == request.user:
                 return Response({"error": "You cannot send a request to yourself"}, status=status.HTTP_400_BAD_REQUEST)
 
+            # Check for existing friend relationship
+            if Contact.objects.filter(user=request.user, friend=receiver).exists():
+                return Response({"error": "You are already friends"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check for an existing pending request from sender to receiver
             if FriendRequest.objects.filter(sender=request.user, receiver=receiver, accepted=False).exists():
                 return Response({"error": "Friend request already sent"}, status=status.HTTP_400_BAD_REQUEST)
 
-            if Contact.objects.filter(user=request.user, friend=receiver).exists():
-                return Response({"error": "You are already friends"}, status=status.HTTP_400_BAD_REQUEST)
+            # Check for an existing pending request from receiver to sender
+            if FriendRequest.objects.filter(sender=receiver, receiver=request.user, accepted=False).exists():
+                return Response(
+                    {"error": "You have a pending friend request from this user. Please accept or reject it first."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             with transaction.atomic():
                 friend_request = FriendRequest(sender=request.user, receiver=receiver)
@@ -169,6 +186,7 @@ class SendFriendRequestView(APIView):
                 serializer = FriendRequestSerializer(friend_request)
 
                 channel_layer = get_channel_layer()
+                # Notify the receiver of the new friend request
                 notify_users(channel_layer, receiver.id, {
                     "type": "friend_request_received",
                     "request": {
@@ -176,6 +194,7 @@ class SendFriendRequestView(APIView):
                         "sender": {"first_name": request.user.first_name, "username": request.user.username}
                     }
                 })
+                # Notify the sender that the request was sent
                 notify_users(channel_layer, request.user.id, {
                     "type": "friend_request_sent",
                     "request": {
