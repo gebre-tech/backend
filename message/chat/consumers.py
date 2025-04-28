@@ -242,3 +242,62 @@ class ChatConsumer(AsyncWebsocketConsumer):
         jwt_auth = JWTAuthentication()
         validated_token = jwt_auth.get_validated_token(token)
         return jwt_auth.get_user(validated_token)
+class GlobalConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        self.group_name = "global_group"
+        query_string = self.scope['query_string'].decode()
+        token = dict(q.split('=') for q in query_string.split('&') if '=' in q).get('token', None)
+
+        if not token:
+            await self.close(code=1008)
+            return
+
+        try:
+            user = await self.authenticate_token(token)
+            self.user = user
+        except AuthenticationFailed:
+            await self.close(code=1008)
+            return
+
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        if hasattr(self, 'group_name'):
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+    async def receive(self, text_data=None, bytes_data=None):
+        if text_data:
+            try:
+                data = json.loads(text_data)
+                if data.get("type") == "update_last_seen":
+                    await self.update_last_seen()
+                    await self.channel_layer.group_send(
+                        self.group_name,
+                        {
+                            "type": "last_seen_update",
+                            "username": self.user.username,
+                            "last_seen": self.user.last_seen.isoformat() if self.user.last_seen else None,
+                        }
+                    )
+            except json.JSONDecodeError:
+                await self.send(text_data=json.dumps({"error": "Invalid JSON data"}))
+
+    async def last_seen_update(self, event):
+        await self.send(text_data=json.dumps({
+            "type": "last_seen_update",
+            "username": event["username"],
+            "last_seen": event["last_seen"],
+        }))
+
+    @database_sync_to_async
+    def authenticate_token(self, token):
+        jwt_auth = JWTAuthentication()
+        validated_token = jwt_auth.get_validated_token(token)
+        return jwt_auth.get_user(validated_token)
+
+    @database_sync_to_async
+    def update_last_seen(self):
+        self.user.last_seen = datetime.now()
+        self.user.save()
+        logger.info(f"Updated last_seen for user {self.user.username} to {self.user.last_seen}")
