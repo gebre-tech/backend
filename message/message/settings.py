@@ -75,7 +75,10 @@ MIDDLEWARE = [
     #'silk.middleware.SilkyMiddleware',  Silk before GZip
     
 ]
-
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:8081",
+    "http://127.0.0.1:8000",
+]
 ROOT_URLCONF = 'message.urls'
 
 TEMPLATES = [
@@ -109,7 +112,7 @@ CHANNEL_LAYERS = {
       'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
             'CONFIG': {
-                'hosts': [('10.161.152.32', 6379)],
+                'hosts': [('127.0.0.1', 6379)],
                 'capacity': 1500,
                 'expiry': 10,
             },
@@ -156,7 +159,7 @@ db_params = {
 }
 
 
-REDIS_HOST = '10.161.152.32'
+REDIS_HOST = '127.0.0.1'
 REDIS_PORT = 6379
 REDIS_DB = 0
 
@@ -258,7 +261,7 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
-SITE_URL = 'http://10.161.152.32:8000'
+SITE_URL = 'http://127.0.0.1:8000'
 # Static & Media Files
 STATIC_URL = '/static/'
 MEDIA_URL = '/media/'

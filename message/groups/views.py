@@ -10,7 +10,12 @@ class ListGroupsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        query = request.query_params.get('query', None)
         groups = Group.objects.filter(members=request.user)
+        
+        if query:
+            groups = groups.filter(name__icontains=query)  # Case-insensitive search by group name
+        
         serializer = GroupSerializer(groups, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 

@@ -1,3 +1,4 @@
+# groups/models.py
 from django.db import models
 from authentication.models import User
 
@@ -16,6 +17,8 @@ class GroupMessage(models.Model):
     message = models.TextField(blank=True, null=True)
     attachment = models.FileField(upload_to="group_attachments/", blank=True, null=True)
     timestamp = models.DateTimeField(auto_now_add=True)
+    reactions = models.JSONField(default=dict)  # e.g., {"user_id": "reaction"}
+    read_by = models.ManyToManyField(User, related_name="read_group_messages")  # Track who read the message
 
     def __str__(self):
         return f"{self.sender} in {self.group.name}: {self.message[:30]}"

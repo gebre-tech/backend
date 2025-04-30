@@ -29,9 +29,9 @@ class GroupChatConsumer(AsyncWebsocketConsumer):
         self.group_name = f"group_{self.group_id}"
 
         # Check if user is a member of the group
-        is_member = await database_sync_to_async(Group.objects.filter)(
+        is_member = await database_sync_to_async(lambda: Group.objects.filter(
             id=self.group_id, members=self.user
-        ).aexists()
+        ).exists())()
         if not is_member:
             await self.close(code=4004)  # Forbidden: Not a group member
             return
@@ -51,21 +51,20 @@ class GroupChatConsumer(AsyncWebsocketConsumer):
             message = data.get('message')
             attachment = data.get('attachment', None)
 
-            group = await database_sync_to_async(Group.objects.get)(id=self.group_id)
-            if group.admin != self.user:
-                await self.send(text_data=json.dumps({
-                    "type": "error",
-                    "message": "Only admins can send messages"
-                }))
-                return
+            group = await database_sync_to_async(lambda: Group.objects.get(id=self.group_id))()
 
+            # Create the group message (removed admin check)
             group_message = await database_sync_to_async(GroupMessage.objects.create)(
                 group=group,
                 sender=self.user,
                 message=message,
                 attachment=attachment
             )
-            message_data = await database_sync_to_async(GroupMessageSerializer)(group_message).data
+
+            # Mark the message as read by the sender
+            await database_sync_to_async(group_message.read_by.add)(self.user)
+
+            message_data = await database_sync_to_async(lambda: GroupMessageSerializer(group_message).data)()
 
             await self.channel_layer.group_send(
                 self.group_name,
@@ -75,8 +74,59 @@ class GroupChatConsumer(AsyncWebsocketConsumer):
                 }
             )
 
+        elif message_type == 'reaction':
+            message_id = data.get('message_id')
+            reaction = data.get('reaction')
+
+            group_message = await database_sync_to_async(GroupMessage.objects.get)(id=message_id)
+            reactions = group_message.reactions or {}
+            reactions[str(self.user.id)] = reaction
+            group_message.reactions = reactions
+            await database_sync_to_async(group_message.save)()
+
+            message_data = await database_sync_to_async(lambda: GroupMessageSerializer(group_message).data)()
+
+            await self.channel_layer.group_send(
+                self.group_name,
+                {
+                    "type": "group_message",
+                    "message": message_data
+                }
+            )
+
+        elif message_type == 'read_receipt':
+            message_id = data.get('message_id')
+            group_message = await database_sync_to_async(GroupMessage.objects.get)(id=message_id)
+            await database_sync_to_async(group_message.read_by.add)(self.user)
+
+            message_data = await database_sync_to_async(lambda: GroupMessageSerializer(group_message).data)()
+
+            await self.channel_layer.group_send(
+                self.group_name,
+                {
+                    "type": "group_message",
+                    "message": message_data
+                }
+            )
+
+        elif message_type == 'typing':
+            await self.channel_layer.group_send(
+                self.group_name,
+                {
+                    "type": "typing",
+                    "user_id": self.user.id,
+                    "first_name": self.user.first_name,
+                }
+            )
+
     async def group_message(self, event):
         await self.send(text_data=json.dumps({
             "type": "group_message",
             "message": event['message']
+        }))
+
+    async def typing(self, event):
+        await self.send(text_data=json.dumps({
+            "type": "typing",
+            "user_id": event['user_id']
         }))

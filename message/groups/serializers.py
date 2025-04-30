@@ -1,3 +1,4 @@
+# groups/serializers.py
 from rest_framework import serializers
 from .models import Group, GroupMessage
 from authentication.serializers import UserSerializer
@@ -11,10 +12,18 @@ class GroupSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'admin', 'members', 'created_at']
 
 class GroupMessageSerializer(serializers.ModelSerializer):
-    sender = UserSerializer(read_only=True)
-    group = GroupSerializer(read_only=True)
+    sender = serializers.SerializerMethodField()
+    group = serializers.SerializerMethodField()
     attachment = serializers.FileField(required=False, allow_null=True)
+    reactions = serializers.JSONField(default=dict)
+    read_by = UserSerializer(many=True, read_only=True)
+
+    def get_sender(self, obj):
+        return {"id": obj.sender.id, "first_name": obj.sender.first_name}
+
+    def get_group(self, obj):
+        return {"id": obj.group.id, "name": obj.group.name}
 
     class Meta:
         model = GroupMessage
-        fields = ['id', 'group', 'sender', 'message', 'attachment', 'timestamp']
+        fields = ['id', 'group', 'sender', 'message', 'attachment', 'timestamp', 'reactions', 'read_by']
