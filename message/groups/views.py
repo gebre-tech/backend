@@ -6,6 +6,15 @@ from .serializers import GroupSerializer, GroupMessageSerializer
 from authentication.models import User
 from rest_framework.permissions import IsAuthenticated
 
+class ListGroupsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        groups = Group.objects.filter(members=request.user)
+        serializer = GroupSerializer(groups, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+# Existing views (for reference, no changes needed)
 class CreateGroupView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -18,6 +27,7 @@ class CreateGroupView(APIView):
 
         group = Group.objects.create(name=group_name, admin=admin)
         group.members.set(members)
+        group.members.add(admin)  # Ensure admin is a member
         group.save()
 
         serializer = GroupSerializer(group)
@@ -29,57 +39,75 @@ class SendGroupMessageView(APIView):
     def post(self, request):
         group_id = request.data.get("group_id")
         message = request.data.get("message")
-        attachment = request.data.get("attachment", None)
+        attachment = request.FILES.get("attachment", None)
 
-        group = Group.objects.get(id=group_id)
-        if group.admin != request.user:
-            return Response({"error": "Only admins can send messages"}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            group = Group.objects.get(id=group_id)
+            if group.admin != request.user:
+                return Response({"error": "Only admins can send messages"}, status=status.HTTP_403_FORBIDDEN)
 
-        group_message = GroupMessage.objects.create(
-            group=group,
-            sender=request.user,
-            message=message,
-            attachment=attachment
-        )
+            group_message = GroupMessage.objects.create(
+                group=group,
+                sender=request.user,
+                message=message,
+                attachment=attachment
+            )
 
-        serializer = GroupMessageSerializer(group_message)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+            serializer = GroupMessageSerializer(group_message)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
 
 class GetGroupMessagesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, group_id):
-        group = Group.objects.get(id=group_id)
-        messages = GroupMessage.objects.filter(group=group)
-        serializer = GroupMessageSerializer(messages, many=True)
-        return Response(serializer.data)
+        try:
+            group = Group.objects.get(id=group_id)
+            if not group.members.filter(id=request.user.id).exists():
+                return Response({"error": "You are not a member of this group"}, status=status.HTTP_403_FORBIDDEN)
+            messages = GroupMessage.objects.filter(group=group).order_by('timestamp')
+            serializer = GroupMessageSerializer(messages, many=True)
+            return Response(serializer.data)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
 
 class AddMemberToGroupView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, group_id, user_id):
-        group = Group.objects.get(id=group_id)
-        user = User.objects.get(id=user_id)
+        try:
+            group = Group.objects.get(id=group_id)
+            user = User.objects.get(id=user_id)
 
-        if group.admin != request.user:
-            return Response({"error": "Only admins can add members"}, status=status.HTTP_403_FORBIDDEN)
+            if group.admin != request.user:
+                return Response({"error": "Only admins can add members"}, status=status.HTTP_403_FORBIDDEN)
 
-        group.members.add(user)
-        group.save()
+            group.members.add(user)
+            group.save()
 
-        return Response({"status": "User added to group"}, status=status.HTTP_200_OK)
+            return Response({"status": "User added to group"}, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
 class RemoveMemberFromGroupView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, group_id, user_id):
-        group = Group.objects.get(id=group_id)
-        user = User.objects.get(id=user_id)
+        try:
+            group = Group.objects.get(id=group_id)
+            user = User.objects.get(id=user_id)
 
-        if group.admin != request.user:
-            return Response({"error": "Only admins can remove members"}, status=status.HTTP_403_FORBIDDEN)
+            if group.admin != request.user:
+                return Response({"error": "Only admins can remove members"}, status=status.HTTP_403_FORBIDDEN)
 
-        group.members.remove(user)
-        group.save()
+            group.members.remove(user)
+            group.save()
 
-        return Response({"status": "User removed from group"}, status=status.HTTP_200_OK)
+            return Response({"status": "User removed from group"}, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)

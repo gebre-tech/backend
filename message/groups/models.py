@@ -1,5 +1,6 @@
 from django.db import models
 from authentication.models import User
+
 class Group(models.Model):
     name = models.CharField(max_length=255)
     admin = models.ForeignKey(User, on_delete=models.CASCADE, related_name="admin_groups")

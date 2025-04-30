@@ -13,6 +13,7 @@ class GroupSerializer(serializers.ModelSerializer):
 class GroupMessageSerializer(serializers.ModelSerializer):
     sender = UserSerializer(read_only=True)
     group = GroupSerializer(read_only=True)
+    attachment = serializers.FileField(required=False, allow_null=True)
 
     class Meta:
         model = GroupMessage

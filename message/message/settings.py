@@ -267,8 +267,7 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # Increase the maximum size of the request body held in memory (default is 2.5MB)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600  # 100MB in bytes
 
-# Already set, but keeping for reference
-FILE_UPLOAD_MAX_MEMORY_SIZE = 104857600  # 100MB in bytes
+
 DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'  # Or use 'storages.backends.s3boto3.S3Boto3Storage' for S3
 
 # Default primary key field type
