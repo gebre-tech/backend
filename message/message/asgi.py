@@ -18,7 +18,7 @@ application = ProtocolTypeRouter({
         URLRouter(
             chat_websocket_urlpatterns +
             contacts_websocket_urlpatterns +
-            profiles_websocket_urlpatterns+
+            profiles_websocket_urlpatterns +
             groups_websocket_urlpatterns
         )
     ),

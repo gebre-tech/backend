@@ -5,6 +5,8 @@ from .models import Group, GroupMessage
 from .serializers import GroupSerializer, GroupMessageSerializer
 from authentication.models import User
 from rest_framework.permissions import IsAuthenticated
+from django.core.paginator import Paginator,EmptyPage
+from django.utils.dateparse import parse_datetime
 
 class ListGroupsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -48,8 +50,11 @@ class SendGroupMessageView(APIView):
 
         try:
             group = Group.objects.get(id=group_id)
-            if group.admin != request.user:
-                return Response({"error": "Only admins can send messages"}, status=status.HTTP_403_FORBIDDEN)
+            if not group.members.filter(id=request.user.id).exists():
+                return Response(
+                    {"error": "You are not a member of this group"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
             group_message = GroupMessage.objects.create(
                 group=group,
@@ -70,10 +75,39 @@ class GetGroupMessagesView(APIView):
         try:
             group = Group.objects.get(id=group_id)
             if not group.members.filter(id=request.user.id).exists():
-                return Response({"error": "You are not a member of this group"}, status=status.HTTP_403_FORBIDDEN)
+                return Response(
+                    {"error": "You are not a member of this group"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
             messages = GroupMessage.objects.filter(group=group).order_by('timestamp')
-            serializer = GroupMessageSerializer(messages, many=True)
-            return Response(serializer.data)
+            since = request.query_params.get('since')
+            if since:
+                since_dt = parse_datetime(since)
+                if since_dt:
+                    messages = messages.filter(timestamp__gt=since_dt)
+
+            page = request.query_params.get('page', 1)
+            page_size = request.query_params.get('page_size', 20)
+
+            paginator = Paginator(messages, page_size)
+            try:
+                paginated_messages = paginator.page(page)
+                serializer = GroupMessageSerializer(paginated_messages, many=True)
+                return Response({
+                    'results': serializer.data,
+                    'next': paginated_messages.has_next(),
+                    'previous': paginated_messages.has_previous(),
+                    'count': paginator.count
+                })
+            except EmptyPage:
+                return Response({
+                    'results': [],
+                    'next': False,
+                    'previous': paginator.num_pages > 1,
+                    'count': paginator.count
+                }, status=status.HTTP_200_OK)
+
         except Group.DoesNotExist:
             return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
 
