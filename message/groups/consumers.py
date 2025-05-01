@@ -130,3 +130,56 @@ class GroupChatConsumer(AsyncWebsocketConsumer):
             "type": "typing",
             "user_id": event['user_id']
         }))
+
+class GlobalGroupsConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        # Extract token from query string
+        token = self.scope['query_string'].decode().split('token=')[1] if 'token=' in self.scope['query_string'].decode() else None
+        if not token:
+            await self.close(code=4001)  # Unauthorized: No token provided
+            return
+
+        # Validate token and authenticate user
+        try:
+            access_token = AccessToken(token)
+            user_id = access_token['user_id']
+            self.user = await database_sync_to_async(User.objects.get)(id=user_id)
+            if not self.user.is_authenticated:
+                await self.close(code=4002)  # Unauthorized: User not authenticated
+                return
+        except Exception as e:
+            print(f"Token validation error: {str(e)}")
+            await self.close(code=4003)  # Forbidden: Invalid token
+            return
+
+        # Get all groups the user is a member of
+        self.groups = await database_sync_to_async(self.get_user_groups)()
+        if not self.groups:
+            await self.close(code=4005)  # No groups found for the user
+            return
+
+        # Join the user to each group's channel layer group
+        self.group_names = [f"group_{group.id}" for group in self.groups]
+        for group_name in self.group_names:
+            await self.channel_layer.group_add(group_name, self.channel_name)
+
+        await self.accept()
+        print(f"GlobalGroupsConsumer connected for user {self.user.id}")
+
+    @database_sync_to_async
+    def get_user_groups(self):
+        return list(Group.objects.filter(members=self.user))
+
+    async def disconnect(self, close_code):
+        # Leave all group channels on disconnect
+        for group_name in getattr(self, 'group_names', []):
+            await self.channel_layer.group_discard(group_name, self.channel_name)
+        print(f"GlobalGroupsConsumer disconnected for user {self.user.id} with code {close_code}")
+
+    async def group_message(self, event):
+        # Forward group messages to the client
+        message = event['message']
+        await self.send(text_data=json.dumps({
+            "type": "group_message",
+            "message": message
+        }))

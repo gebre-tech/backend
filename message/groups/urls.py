@@ -7,5 +7,7 @@ urlpatterns = [
     path('messages/<int:group_id>/', views.GetGroupMessagesView.as_view(), name='get_group_messages'),
     path('add_member/<int:group_id>/<int:user_id>/', views.AddMemberToGroupView.as_view(), name='add_member_to_group'),
     path('remove_member/<int:group_id>/<int:user_id>/', views.RemoveMemberFromGroupView.as_view(), name='remove_member_from_group'),
-    path('list/', views.ListGroupsView.as_view(), name='list_groups'),  # Add this line
+    path('list/', views.ListGroupsView.as_view(), name='list_groups'),
+    path('update_profile_picture/<int:group_id>/', views.UpdateGroupProfilePictureView.as_view(), name='update_group_profile_picture'),
+    path('details/<int:group_id>/', views.GroupDetailsView.as_view(), name='group_details'),  # Added endpoint
 ]

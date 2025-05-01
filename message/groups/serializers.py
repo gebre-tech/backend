@@ -1,4 +1,3 @@
-# groups/serializers.py
 from rest_framework import serializers
 from .models import Group, GroupMessage
 from authentication.serializers import UserSerializer
@@ -6,10 +5,11 @@ from authentication.serializers import UserSerializer
 class GroupSerializer(serializers.ModelSerializer):
     admin = UserSerializer(read_only=True)
     members = UserSerializer(read_only=True, many=True)
+    profile_picture = serializers.ImageField(required=False, allow_null=True)  # Added profile picture field
 
     class Meta:
         model = Group
-        fields = ['id', 'name', 'admin', 'members', 'created_at']
+        fields = ['id', 'name', 'admin', 'members', 'created_at', 'profile_picture']
 
 class GroupMessageSerializer(serializers.ModelSerializer):
     sender = serializers.SerializerMethodField()
@@ -19,7 +19,11 @@ class GroupMessageSerializer(serializers.ModelSerializer):
     read_by = UserSerializer(many=True, read_only=True)
 
     def get_sender(self, obj):
-        return {"id": obj.sender.id, "first_name": obj.sender.first_name}
+        return {
+            "id": obj.sender.id,
+            "first_name": obj.sender.first_name,
+            "username": obj.sender.username  # Added username field
+        }
 
     def get_group(self, obj):
         return {"id": obj.group.id, "name": obj.group.name}

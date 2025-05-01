@@ -5,8 +5,71 @@ from .models import Group, GroupMessage
 from .serializers import GroupSerializer, GroupMessageSerializer
 from authentication.models import User
 from rest_framework.permissions import IsAuthenticated
-from django.core.paginator import Paginator,EmptyPage
+from django.core.paginator import Paginator, EmptyPage
 from django.utils.dateparse import parse_datetime
+
+class GroupDetailsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, group_id):
+        try:
+            group = Group.objects.get(id=group_id)
+            if not group.members.filter(id=request.user.id).exists():
+                return Response(
+                    {"error": "You are not a member of this group"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            total_messages = GroupMessage.objects.filter(group=group).count()
+            total_members = group.members.count()
+
+            group_data = {
+                "id": group.id,
+                "name": group.name,
+                "created_at": group.created_at,
+                "total_members": total_members,
+                "total_messages": total_messages,
+                "admin": {
+                    "id": group.admin.id,
+                    "first_name": group.admin.first_name,
+                    "username": group.admin.username,
+                },
+                "profile_picture": group.profile_picture.url if group.profile_picture else None,
+            }
+
+            return Response(group_data, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class UpdateGroupProfilePictureView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, group_id):
+        try:
+            group = Group.objects.get(id=group_id)
+            if group.admin != request.user:
+                return Response(
+                    {"error": "Only admins can update the group profile picture"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            print("Request FILES:", request.FILES)
+            print("Request POST:", request.POST)
+
+            profile_picture = request.FILES.get("profile_picture", None)
+            if not profile_picture:
+                return Response(
+                    {"error": "No profile picture provided"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            group.profile_picture = profile_picture
+            group.save()
+
+            serializer = GroupSerializer(group)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
 
 class ListGroupsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -16,12 +79,11 @@ class ListGroupsView(APIView):
         groups = Group.objects.filter(members=request.user)
         
         if query:
-            groups = groups.filter(name__icontains=query)  # Case-insensitive search by group name
+            groups = groups.filter(name__icontains=query)
         
         serializer = GroupSerializer(groups, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-# Existing views (for reference, no changes needed)
 class CreateGroupView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -34,7 +96,7 @@ class CreateGroupView(APIView):
 
         group = Group.objects.create(name=group_name, admin=admin)
         group.members.set(members)
-        group.members.add(admin)  # Ensure admin is a member
+        group.members.add(admin)
         group.save()
 
         serializer = GroupSerializer(group)

@@ -1,4 +1,3 @@
-# groups/models.py
 from django.db import models
 from authentication.models import User
 
@@ -7,6 +6,7 @@ class Group(models.Model):
     admin = models.ForeignKey(User, on_delete=models.CASCADE, related_name="admin_groups")
     members = models.ManyToManyField(User, related_name="group_memberships")
     created_at = models.DateTimeField(auto_now_add=True)
+    profile_picture = models.ImageField(upload_to="group_profiles/", blank=True, null=True)  # Added profile picture field
 
     def __str__(self):
         return self.name
