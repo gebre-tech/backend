@@ -29,11 +29,19 @@ class GroupDetailsView(APIView):
                 "created_at": group.created_at,
                 "total_members": total_members,
                 "total_messages": total_messages,
-                "admin": {
-                    "id": group.admin.id,
-                    "first_name": group.admin.first_name,
-                    "username": group.admin.username,
+                "creator": {
+                    "id": group.creator.id,
+                    "first_name": group.creator.first_name,
+                    "username": group.creator.username,
                 },
+                "admins": [
+                    {
+                        "id": admin.id,
+                        "first_name": admin.first_name,
+                        "username": admin.username,
+                    }
+                    for admin in group.admins.all()
+                ],
                 "profile_picture": group.profile_picture.url if group.profile_picture else None,
             }
 
@@ -47,7 +55,7 @@ class UpdateGroupProfilePictureView(APIView):
     def post(self, request, group_id):
         try:
             group = Group.objects.get(id=group_id)
-            if group.admin != request.user:
+            if request.user not in group.admins.all():
                 return Response(
                     {"error": "Only admins can update the group profile picture"},
                     status=status.HTTP_403_FORBIDDEN
@@ -91,12 +99,13 @@ class CreateGroupView(APIView):
         group_name = request.data.get("name")
         members_ids = request.data.get("members", [])
 
-        admin = request.user
+        creator = request.user
         members = User.objects.filter(id__in=members_ids)
 
-        group = Group.objects.create(name=group_name, admin=admin)
+        group = Group.objects.create(name=group_name, creator=creator)
         group.members.set(members)
-        group.members.add(admin)
+        group.members.add(creator)
+        group.admins.add(creator)  # Creator is the first admin
         group.save()
 
         serializer = GroupSerializer(group)
@@ -181,7 +190,7 @@ class AddMemberToGroupView(APIView):
             group = Group.objects.get(id=group_id)
             user = User.objects.get(id=user_id)
 
-            if group.admin != request.user:
+            if request.user not in group.admins.all():
                 return Response({"error": "Only admins can add members"}, status=status.HTTP_403_FORBIDDEN)
 
             group.members.add(user)
@@ -201,7 +210,7 @@ class RemoveMemberFromGroupView(APIView):
             group = Group.objects.get(id=group_id)
             user = User.objects.get(id=user_id)
 
-            if group.admin != request.user:
+            if request.user not in group.admins.all():
                 return Response({"error": "Only admins can remove members"}, status=status.HTTP_403_FORBIDDEN)
 
             group.members.remove(user)
@@ -212,3 +221,97 @@ class RemoveMemberFromGroupView(APIView):
             return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class AssignAdminView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, group_id, user_id):
+        try:
+            group = Group.objects.get(id=group_id)
+            user = User.objects.get(id=user_id)
+
+            if request.user != group.creator:
+                return Response(
+                    {"error": "Only the group owner can assign admin rights"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            if user not in group.members.all():
+                return Response(
+                    {"error": "User must be a member of the group to be assigned as admin"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if user in group.admins.all():
+                return Response(
+                    {"error": "User is already an admin"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            group.admins.add(user)
+            group.save()
+
+            return Response({"status": "User assigned as admin"}, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class RevokeAdminView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, group_id, user_id):
+        try:
+            group = Group.objects.get(id=group_id)
+            user = User.objects.get(id=user_id)
+
+            if request.user != group.creator:
+                return Response(
+                    {"error": "Only the group owner can revoke admin rights"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            if user == group.creator:
+                return Response(
+                    {"error": "Cannot revoke admin rights from the group owner"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if user not in group.admins.all():
+                return Response(
+                    {"error": "User is not an admin"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            group.admins.remove(user)
+            group.save()
+
+            return Response({"status": "Admin rights revoked"}, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class LeaveGroupView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, group_id):
+        try:
+            group = Group.objects.get(id=group_id)
+            if request.user == group.creator:
+                return Response(
+                    {"error": "The group owner cannot leave the group"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            if not group.members.filter(id=request.user.id).exists():
+                return Response(
+                    {"error": "You are not a member of this group"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            group.members.remove(request.user)
+            group.save()
+
+            return Response({"status": "Successfully left the group"}, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)

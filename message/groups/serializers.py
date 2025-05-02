@@ -3,13 +3,14 @@ from .models import Group, GroupMessage
 from authentication.serializers import UserSerializer
 
 class GroupSerializer(serializers.ModelSerializer):
-    admin = UserSerializer(read_only=True)
+    creator = UserSerializer(read_only=True)
+    admins = UserSerializer(read_only=True, many=True)
     members = UserSerializer(read_only=True, many=True)
-    profile_picture = serializers.ImageField(required=False, allow_null=True)  # Added profile picture field
+    profile_picture = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
         model = Group
-        fields = ['id', 'name', 'admin', 'members', 'created_at', 'profile_picture']
+        fields = ['id', 'name', 'creator', 'admins', 'members', 'created_at', 'profile_picture']
 
 class GroupMessageSerializer(serializers.ModelSerializer):
     sender = serializers.SerializerMethodField()
@@ -22,7 +23,7 @@ class GroupMessageSerializer(serializers.ModelSerializer):
         return {
             "id": obj.sender.id,
             "first_name": obj.sender.first_name,
-            "username": obj.sender.username  # Added username field
+            "username": obj.sender.username
         }
 
     def get_group(self, obj):

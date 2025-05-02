@@ -9,5 +9,8 @@ urlpatterns = [
     path('remove_member/<int:group_id>/<int:user_id>/', views.RemoveMemberFromGroupView.as_view(), name='remove_member_from_group'),
     path('list/', views.ListGroupsView.as_view(), name='list_groups'),
     path('update_profile_picture/<int:group_id>/', views.UpdateGroupProfilePictureView.as_view(), name='update_group_profile_picture'),
-    path('details/<int:group_id>/', views.GroupDetailsView.as_view(), name='group_details'),  # Added endpoint
+    path('details/<int:group_id>/', views.GroupDetailsView.as_view(), name='group_details'),
+    path('assign_admin/<int:group_id>/<int:user_id>/', views.AssignAdminView.as_view(), name='assign_admin'),
+    path('revoke_admin/<int:group_id>/<int:user_id>/', views.RevokeAdminView.as_view(), name='revoke_admin'),
+    path('leave/<int:group_id>/', views.LeaveGroupView.as_view(), name='leave_group'),
 ]
