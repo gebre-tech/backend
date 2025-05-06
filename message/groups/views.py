@@ -7,6 +7,56 @@ from authentication.models import User
 from rest_framework.permissions import IsAuthenticated
 from django.core.paginator import Paginator, EmptyPage
 from django.utils.dateparse import parse_datetime
+import logging
+
+logger = logging.getLogger(__name__)
+
+class GetGroupMessagesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, group_id):
+        logger.info(f"Fetching messages for group {group_id} by user {request.user.id}")
+        try:
+            group = Group.objects.get(id=group_id)
+            if not group.members.filter(id=request.user.id).exists():
+                logger.warning(f"User {request.user.id} is not a member of group {group_id}")
+                return Response({"error": "You are not a member of this group"}, status=status.HTTP_403_FORBIDDEN)
+
+            messages = GroupMessage.objects.filter(group=group).order_by('timestamp')
+            since = request.query_params.get('since')
+            if since:
+                since_dt = parse_datetime(since)
+                if since_dt:
+                    messages = messages.filter(timestamp__gt=since_dt)
+
+            page = request.query_params.get('page', 1)
+            page_size = request.query_params.get('page_size', 20)
+
+            paginator = Paginator(messages, page_size)
+            try:
+                paginated_messages = paginator.page(page)
+                serializer = GroupMessageSerializer(paginated_messages, many=True, context={'request': request})
+                logger.info(f"Returning {len(serializer.data)} messages for group {group_id}")
+                return Response({
+                    'results': serializer.data,
+                    'next': paginated_messages.has_next(),
+                    'previous': paginated_messages.has_previous(),
+                    'count': paginator.count
+                })
+            except EmptyPage:
+                logger.info(f"Empty page for group {group_id}, page {page}")
+                return Response({
+                    'results': [],
+                    'next': False,
+                    'previous': paginator.num_pages > 1,
+                    'count': paginator.count
+                }, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            logger.error(f"Group {group_id} not found")
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error fetching messages for group {group_id}: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class GroupDetailsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -61,9 +111,6 @@ class UpdateGroupProfilePictureView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
 
-            print("Request FILES:", request.FILES)
-            print("Request POST:", request.POST)
-
             profile_picture = request.FILES.get("profile_picture", None)
             if not profile_picture:
                 return Response(
@@ -105,7 +152,7 @@ class CreateGroupView(APIView):
         group = Group.objects.create(name=group_name, creator=creator)
         group.members.set(members)
         group.members.add(creator)
-        group.admins.add(creator)  # Creator is the first admin
+        group.admins.add(creator)
         group.save()
 
         serializer = GroupSerializer(group)
@@ -118,6 +165,8 @@ class SendGroupMessageView(APIView):
         group_id = request.data.get("group_id")
         message = request.data.get("message")
         attachment = request.FILES.get("attachment", None)
+        file_name = request.data.get("file_name", attachment.name if attachment else None)
+        file_type = request.data.get("file_type", attachment.content_type if attachment else None)
 
         try:
             group = Group.objects.get(id=group_id)
@@ -126,61 +175,32 @@ class SendGroupMessageView(APIView):
                     {"error": "You are not a member of this group"},
                     status=status.HTTP_403_FORBIDDEN
                 )
+
+            if attachment:
+                # Validate file size (e.g., max 10MB)
+                max_size = 10 * 1024 * 1024  # 10MB
+                if attachment.size > max_size:
+                    return Response(
+                        {"error": "File size exceeds 10MB limit"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
             group_message = GroupMessage.objects.create(
                 group=group,
                 sender=request.user,
                 message=message,
-                attachment=attachment
+                attachment=attachment,
+                file_name=file_name,
+                file_type=file_type
             )
 
-            serializer = GroupMessageSerializer(group_message)
+            serializer = GroupMessageSerializer(group_message, context={'request': request})
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Group.DoesNotExist:
             return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
-
-class GetGroupMessagesView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, group_id):
-        try:
-            group = Group.objects.get(id=group_id)
-            if not group.members.filter(id=request.user.id).exists():
-                return Response(
-                    {"error": "You are not a member of this group"},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-            messages = GroupMessage.objects.filter(group=group).order_by('timestamp')
-            since = request.query_params.get('since')
-            if since:
-                since_dt = parse_datetime(since)
-                if since_dt:
-                    messages = messages.filter(timestamp__gt=since_dt)
-
-            page = request.query_params.get('page', 1)
-            page_size = request.query_params.get('page_size', 20)
-
-            paginator = Paginator(messages, page_size)
-            try:
-                paginated_messages = paginator.page(page)
-                serializer = GroupMessageSerializer(paginated_messages, many=True)
-                return Response({
-                    'results': serializer.data,
-                    'next': paginated_messages.has_next(),
-                    'previous': paginated_messages.has_previous(),
-                    'count': paginator.count
-                })
-            except EmptyPage:
-                return Response({
-                    'results': [],
-                    'next': False,
-                    'previous': paginator.num_pages > 1,
-                    'count': paginator.count
-                }, status=status.HTTP_200_OK)
-
-        except Group.DoesNotExist:
-            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error sending message for group {group_id}: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class AddMemberToGroupView(APIView):
     permission_classes = [IsAuthenticated]

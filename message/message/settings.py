@@ -40,6 +40,7 @@ DEBUG = True
 # Application definition
 
 INSTALLED_APPS = [
+    'corsheaders',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -50,7 +51,7 @@ INSTALLED_APPS = [
     
     'rest_framework',
     'rest_framework_simplejwt',
-    'corsheaders',
+    
     'channels',
     'authentication',
     'contacts',
@@ -75,11 +76,7 @@ MIDDLEWARE = [
     #'silk.middleware.SilkyMiddleware',  Silk before GZip
     
 ]
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:8081",
-    "http://127.0.0.1:8000",
-    
-]
+
 ROOT_URLCONF = 'message.urls'
 
 TEMPLATES = [
@@ -220,6 +217,14 @@ DEFAULT_FROM_EMAIL = 'noreply@yourapp.com'
 
 # CORS Settings
 CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
+CORS_ALLOW_HEADERS = [
+    'authorization',
+    'content-type',
+    'x-csrftoken',
+    'accept',
+    'origin',
+]
 ALLOWED_HOSTS = [
     '192.168.137.1',
     '10.0.2.2',
@@ -262,18 +267,21 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
-SITE_URL = 'http://192.168.137.1:8000'
+SITE_URL = 'http://127.0.0.1:8000'
 # Static & Media Files
 STATIC_URL = '/static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Increase the maximum size of the request body held in memory (default is 2.5MB)
-DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600  # 100MB in bytes
+DATA_UPLOAD_MAX_MEMORY_SIZE = 1048576000  # 100MB in bytes
 
 
 DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'  # Or use 'storages.backends.s3boto3.S3Boto3Storage' for S3
-
+FILE_UPLOAD_HANDLERS = [
+    'django.core.files.uploadhandler.MemoryFileUploadHandler',
+    'django.core.files.uploadhandler.TemporaryFileUploadHandler',
+]
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 

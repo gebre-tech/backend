@@ -1,21 +1,32 @@
 from rest_framework import serializers
 from .models import Group, GroupMessage
 from authentication.serializers import UserSerializer
+import os
 
 class GroupSerializer(serializers.ModelSerializer):
     creator = UserSerializer(read_only=True)
     admins = UserSerializer(read_only=True, many=True)
     members = UserSerializer(read_only=True, many=True)
     profile_picture = serializers.ImageField(required=False, allow_null=True)
+    last_message = serializers.SerializerMethodField()
+    unread_count = serializers.IntegerField(read_only=True)
+
+    def get_last_message(self, obj):
+        if hasattr(obj, 'last_message') and obj.last_message:
+            return GroupMessageSerializer(obj.last_message[0]).data
+        return None
 
     class Meta:
         model = Group
-        fields = ['id', 'name', 'creator', 'admins', 'members', 'created_at', 'profile_picture']
+        fields = ['id', 'name', 'creator', 'admins', 'members', 'created_at', 
+                 'profile_picture', 'last_message', 'unread_count']
 
 class GroupMessageSerializer(serializers.ModelSerializer):
     sender = serializers.SerializerMethodField()
     group = serializers.SerializerMethodField()
     attachment = serializers.FileField(required=False, allow_null=True)
+    file_url = serializers.SerializerMethodField()
+    file_size = serializers.SerializerMethodField()  # Added for file size
     reactions = serializers.JSONField(default=dict)
     read_by = UserSerializer(many=True, read_only=True)
 
@@ -29,6 +40,21 @@ class GroupMessageSerializer(serializers.ModelSerializer):
     def get_group(self, obj):
         return {"id": obj.group.id, "name": obj.group.name}
 
+    def get_file_url(self, obj):
+        if obj.attachment:
+            request = self.context.get('request')
+            return request.build_absolute_uri(obj.attachment.url) if request else obj.attachment.url
+        return None
+
+    def get_file_size(self, obj):
+        if obj.attachment and obj.attachment.file:
+            try:
+                return obj.attachment.size  # Size in bytes
+            except (AttributeError, OSError):
+                return None
+        return None
+
     class Meta:
         model = GroupMessage
-        fields = ['id', 'group', 'sender', 'message', 'attachment', 'timestamp', 'reactions', 'read_by']
+        fields = ['id', 'group', 'sender', 'message', 'attachment', 'file_name', 'file_type', 
+                  'file_url', 'file_size', 'timestamp', 'reactions', 'read_by']
