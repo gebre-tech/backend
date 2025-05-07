@@ -116,6 +116,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 metadata = self.pending_metadata or {}
                 file_name = metadata.get("file_name", f"unnamed_file_{datetime.now().timestamp()}")
                 file_type = metadata.get("file_type", "application/octet-stream")
+                file_size = metadata.get("file_size") or len(bytes_data)  # Use provided file_size or calculate from bytes_data
                 nonce = metadata.get("nonce")
                 ephemeral_key = metadata.get("ephemeral_key")
                 message_key = metadata.get("message_key")
@@ -133,6 +134,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     bytes_data,
                     file_name,
                     file_type,
+                    file_size,  # Pass file_size to save
                     nonce,
                     ephemeral_key,
                     message_key
@@ -151,6 +153,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         "file_name": file_name,
                         "file_type": file_type,
                         "file_url": full_file_url,
+                        "file_size": file_size,  # Include file_size in WebSocket message
                         "nonce": nonce,
                         "ephemeral_key": ephemeral_key,
                         "message_key": message_key,
@@ -173,6 +176,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "file_name": event.get("file_name"),
             "file_type": event.get("file_type"),
             "file_url": event.get("file_url"),
+            "file_size": event.get("file_size"),  # Include file_size
             "timestamp": event.get("timestamp", datetime.now().isoformat())
         }
         await self.send(text_data=json.dumps(message_data))
@@ -191,7 +195,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
 
     @database_sync_to_async
-    def save_file_message(self, sender_id, receiver_id, file_data, file_name, file_type, nonce, ephemeral_key, message_key):
+    def save_file_message(self, sender_id, receiver_id, file_data, file_name, file_type, file_size, nonce, ephemeral_key, message_key):
         sender = User.objects.get(id=sender_id)
         receiver = User.objects.get(id=receiver_id)
         message = Message.objects.create(
@@ -200,6 +204,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             content="",
             file_name=file_name,
             file_type=file_type,
+            file_size=file_size,  # Save file_size
             nonce=nonce or '',
             ephemeral_key=ephemeral_key or '',
             message_key=message_key or ''
@@ -219,7 +224,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         messages = Message.objects.filter(
             (Q(sender_id=sender_id) & Q(receiver_id=receiver_id)) |
             (Q(sender_id=receiver_id) & Q(receiver_id=sender_id))
-        ).order_by('created_at').only('sender_id', 'receiver_id', 'content', 'nonce', 'ephemeral_key', 'message_key', 'created_at', 'file_name', 'file_type', 'file')
+        ).order_by('created_at').only('sender_id', 'receiver_id', 'content', 'nonce', 'ephemeral_key', 'message_key', 'created_at', 'file_name', 'file_type', 'file', 'file_size')
         return [
             {
                 "sender": msg.sender.id,
@@ -232,7 +237,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "type": "photo" if msg.file and msg.file_type.startswith('image/') else "video" if msg.file and msg.file_type.startswith('video/') else "file" if msg.file else "text",
                 "file_name": msg.file_name,
                 "file_type": msg.file_type,
-                "file_url": msg.file.url if msg.file else None
+                "file_url": msg.file.url if msg.file else None,
+                "file_size": msg.file_size  # Include file_size
             }
             for msg in messages
         ]
@@ -242,6 +248,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         jwt_auth = JWTAuthentication()
         validated_token = jwt_auth.get_validated_token(token)
         return jwt_auth.get_user(validated_token)
+
 class GlobalConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.group_name = "global_group"

@@ -93,6 +93,7 @@ class GroupDetailsView(APIView):
                     for admin in group.admins.all()
                 ],
                 "profile_picture": group.profile_picture.url if group.profile_picture else None,
+                "can_members_send_messages": group.can_members_send_messages,
             }
 
             return Response(group_data, status=status.HTTP_200_OK)
@@ -176,8 +177,14 @@ class SendGroupMessageView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
 
+            # Check if non-admin members can send messages
+            if not group.can_members_send_messages and request.user not in group.admins.all():
+                return Response(
+                    {"error": "You are not allowed to send messages in this group"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
             if attachment:
-                # Validate file size (e.g., max 10MB)
                 max_size = 10 * 1024 * 1024  # 10MB
                 if attachment.size > max_size:
                     return Response(
@@ -333,5 +340,99 @@ class LeaveGroupView(APIView):
             group.save()
 
             return Response({"status": "Successfully left the group"}, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class DeleteGroupView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, group_id):
+        try:
+            group = Group.objects.get(id=group_id)
+            if request.user != group.creator:
+                return Response(
+                    {"error": "Only the group owner can delete the group"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            group.delete()
+            return Response({"status": "Group deleted successfully"}, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class EditGroupMessageView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, group_id, message_id):
+        try:
+            group = Group.objects.get(id=group_id)
+            message = GroupMessage.objects.get(id=message_id, group=group)
+            
+            # Only sender, admins, or creator can edit
+            is_admin_or_creator = request.user in group.admins.all() or request.user == group.creator
+            if message.sender != request.user and not is_admin_or_creator:
+                return Response(
+                    {"error": "You are not authorized to edit this message"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            new_message = request.data.get("message")
+            if not new_message:
+                return Response(
+                    {"error": "New message content is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            message.message = new_message
+            message.save()
+
+            serializer = GroupMessageSerializer(message, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+        except GroupMessage.DoesNotExist:
+            return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class DeleteGroupMessageView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, group_id, message_id):
+        try:
+            group = Group.objects.get(id=group_id)
+            message = GroupMessage.objects.get(id=message_id, group=group)
+            
+            # Only sender, admins, or creator can delete
+            is_admin_or_creator = request.user in group.admins.all() or request.user == group.creator
+            if message.sender != request.user and not is_admin_or_creator:
+                return Response(
+                    {"error": "You are not authorized to delete this message"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            message.delete()
+            return Response({"status": "Message deleted successfully"}, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+        except GroupMessage.DoesNotExist:
+            return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class ToggleMemberMessagingView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, group_id):
+        try:
+            group = Group.objects.get(id=group_id)
+            if request.user not in group.admins.all():
+                return Response(
+                    {"error": "Only admins can toggle messaging permissions"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            group.can_members_send_messages = not group.can_members_send_messages
+            group.save()
+
+            return Response({
+                "status": "Messaging permissions updated",
+                "can_members_send_messages": group.can_members_send_messages
+            }, status=status.HTTP_200_OK)
         except Group.DoesNotExist:
             return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
