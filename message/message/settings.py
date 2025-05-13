@@ -60,6 +60,8 @@ INSTALLED_APPS = [
     'profiles',
     'channels_redis',
     'redis',
+    'django_redis',
+    
 ] 
 
 
@@ -199,24 +201,29 @@ REST_FRAMEWORK.update({
 """
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=1),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=5),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
     #'ROTATE_REFRESH_TOKENS': True,                 # Issue new refresh token on refresh
     #'BLACKLIST_AFTER_ROTATION': True,
 }
 # settings.py
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # For testing
-# For production, use SMTP:
-# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-# EMAIL_HOST = 'smtp.gmail.com'
-# EMAIL_PORT = 587
-# EMAIL_USE_TLS = True
-# EMAIL_HOST_USER = 'your-email@gmail.com'
-# EMAIL_HOST_PASSWORD = 'your-app-specific-password'
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', 'your-email@gmail.com')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', 'your-app-specific-password')
 DEFAULT_FROM_EMAIL = 'noreply@yourapp.com'
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://192.168.137.1:3000')
 
 # CORS Settings
 CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = [
+    'http://192.168.137.1:3000',
+    'https://192.168.137.1:3000',
+    'http://localhost:3000',
+    'https://localhost:3000',
+]
 CORS_ALLOW_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 CORS_ALLOW_HEADERS = [
     'authorization',
@@ -267,7 +274,7 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
-SITE_URL = 'http://127.0.0.1:8000'
+SITE_URL = 'http://192.168.137.1:8000'
 # Static & Media Files
 STATIC_URL = '/static/'
 MEDIA_URL = '/media/'

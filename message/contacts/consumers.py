@@ -1,5 +1,5 @@
-# contacts/consumers.py
 import json
+import uuid
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from .models import FriendRequest, Contact
@@ -10,12 +10,11 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
-# contacts/consumers.py
 class ContactConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         token = self.scope['query_string'].decode().split('token=')[1] if 'token=' in self.scope['query_string'].decode() else None
         if not token:
-            await self.close(code=4001)  # Unauthorized: No token provided
+            await self.close(code=4001)
             return
 
         try:
@@ -23,11 +22,11 @@ class ContactConsumer(AsyncWebsocketConsumer):
             user_id = access_token['user_id']
             self.user = await database_sync_to_async(User.objects.get)(id=user_id)
             if not self.user.is_authenticated:
-                await self.close(code=4002)  # Unauthorized: User not authenticated
+                await self.close(code=4002)
                 return
         except Exception as e:
             print(f"Token validation error: {str(e)}")
-            await self.close(code=4003)  # Forbidden: Invalid token
+            await self.close(code=4003)
             return
 
         self.group_name = f"user_{self.user.id}"
@@ -45,65 +44,64 @@ class ContactConsumer(AsyncWebsocketConsumer):
         if message_type == 'friend_request':
             username = data.get('username')
             try:
-                # Fetch the receiver
                 receiver = await database_sync_to_async(User.objects.get)(username=username)
                 if receiver == self.user:
                     await self.send(text_data=json.dumps({
                         "type": "error",
+                        "event_id": str(uuid.uuid4()),
                         "message": "You cannot send a request to yourself"
                     }))
                     return
 
-                # Check if users are already friends
                 already_friends = await database_sync_to_async(Contact.objects.filter)(
                     user=self.user, friend=receiver
                 ).aexists()
                 if already_friends:
                     await self.send(text_data=json.dumps({
                         "type": "error",
+                        "event_id": str(uuid.uuid4()),
                         "message": "You are already friends"
                     }))
                     return
 
-                # Check for an existing pending request from sender to receiver
                 existing_request = await database_sync_to_async(FriendRequest.objects.filter)(
                     sender=self.user, receiver=receiver, accepted=False
                 ).afirst()
                 if existing_request:
                     await self.send(text_data=json.dumps({
                         "type": "error",
+                        "event_id": str(uuid.uuid4()),
                         "message": "A friend request to this user is already pending."
                     }))
                     return
 
-                # Check for an existing pending request from receiver to sender
                 reverse_request = await database_sync_to_async(FriendRequest.objects.filter)(
                     sender=receiver, receiver=self.user, accepted=False
                 ).afirst()
                 if reverse_request:
                     await self.send(text_data=json.dumps({
                         "type": "error",
+                        "event_id": str(uuid.uuid4()),
                         "message": "You have a pending friend request from this user. Please accept or reject it first."
                     }))
                     return
 
-                # Create the friend request
                 friend_request = await database_sync_to_async(FriendRequest.objects.create)(sender=self.user, receiver=receiver)
                 request_data = await database_sync_to_async(FriendRequestSerializer)(friend_request).data
+                event_id = str(uuid.uuid4())
 
-                # Notify the sender
                 await self.channel_layer.group_send(
                     f"user_{self.user.id}",
-                    {"type": "friend_request_sent", "request": request_data}
+                    {"type": "friend_request_sent", "event_id": event_id, "request": request_data}
                 )
-                # Notify the receiver
                 await self.channel_layer.group_send(
                     f"user_{receiver.id}",
-                    {"type": "friend_request_received", "request": request_data}
+                    {"type": "friend_request_received", "event_id": event_id, "request": request_data}
                 )
             except User.DoesNotExist:
                 await self.send(text_data=json.dumps({
                     "type": "error",
+                    "event_id": str(uuid.uuid4()),
                     "message": f"User '{username}' not found"
                 }))
 
@@ -114,7 +112,6 @@ class ContactConsumer(AsyncWebsocketConsumer):
                 friend_request.accepted = True
                 await database_sync_to_async(friend_request.save)()
 
-                # Create mutual contacts
                 receiver_contact = await database_sync_to_async(Contact.objects.get_or_create)(
                     user=friend_request.receiver, friend=friend_request.sender
                 )[0]
@@ -124,12 +121,13 @@ class ContactConsumer(AsyncWebsocketConsumer):
 
                 receiver_contact_data = await database_sync_to_async(ContactSerializer)(receiver_contact, context={'request': None}).data
                 sender_contact_data = await database_sync_to_async(ContactSerializer)(sender_contact, context={'request': None}).data
+                event_id = str(uuid.uuid4())
 
-                # Notify both users
                 await self.channel_layer.group_send(
                     f"user_{friend_request.sender.id}",
                     {
                         "type": "friend_request_accepted",
+                        "event_id": event_id,
                         "requestId": request_id,
                         "friend_first_name": friend_request.receiver.first_name,
                         "contact": sender_contact_data
@@ -139,6 +137,7 @@ class ContactConsumer(AsyncWebsocketConsumer):
                     f"user_{friend_request.receiver.id}",
                     {
                         "type": "friend_request_accepted",
+                        "event_id": event_id,
                         "requestId": request_id,
                         "friend_first_name": friend_request.sender.first_name,
                         "contact": receiver_contact_data
@@ -147,6 +146,7 @@ class ContactConsumer(AsyncWebsocketConsumer):
             except FriendRequest.DoesNotExist:
                 await self.send(text_data=json.dumps({
                     "type": "error",
+                    "event_id": str(uuid.uuid4()),
                     "message": "Friend request not found or already processed"
                 }))
 
@@ -158,12 +158,13 @@ class ContactConsumer(AsyncWebsocketConsumer):
                 sender_first_name = friend_request.sender.first_name
                 receiver_first_name = friend_request.receiver.first_name
                 await database_sync_to_async(friend_request.delete)()
+                event_id = str(uuid.uuid4())
 
-                # Notify both users
                 await self.channel_layer.group_send(
                     f"user_{sender_id}",
                     {
                         "type": "friend_request_rejected",
+                        "event_id": event_id,
                         "requestId": request_id,
                         "rejected_by": receiver_first_name
                     }
@@ -172,6 +173,7 @@ class ContactConsumer(AsyncWebsocketConsumer):
                     f"user_{self.user.id}",
                     {
                         "type": "friend_request_rejected",
+                        "event_id": event_id,
                         "requestId": request_id,
                         "rejected_user": sender_first_name
                     }
@@ -179,6 +181,7 @@ class ContactConsumer(AsyncWebsocketConsumer):
             except FriendRequest.DoesNotExist:
                 await self.send(text_data=json.dumps({
                     "type": "error",
+                    "event_id": str(uuid.uuid4()),
                     "message": "Friend request not found or already processed"
                 }))
 

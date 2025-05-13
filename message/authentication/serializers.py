@@ -1,4 +1,3 @@
-# authentication/serializers.py
 import re
 from rest_framework import serializers
 from authentication.models import User
@@ -7,11 +6,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'public_key']  # Added public_key
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'public_key']
 
 class RegisterSerializer(serializers.ModelSerializer):
     password2 = serializers.CharField(write_only=True)
-    public_key = serializers.CharField(max_length=64, required=True)  # New field for public key
+    public_key = serializers.CharField(max_length=64, required=True)
 
     class Meta:
         model = User
@@ -55,6 +54,15 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Public key must be a 64-character hexadecimal string.")
         return value
 
+    def validate_password(self, value):
+        if len(value) < 8:
+            raise serializers.ValidationError("Password must be at least 8 characters long.")
+        if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]+$', value):
+            raise serializers.ValidationError(
+                "Password must include at least one uppercase letter, one lowercase letter, one number, and one special character."
+            )
+        return value
+
     def validate(self, data):
         if data['password'] != data['password2']:
             raise serializers.ValidationError({"password2": "Passwords do not match."})
@@ -85,3 +93,29 @@ class LoginSerializer(serializers.Serializer):
             "access": str(refresh.access_token),
             'user': UserSerializer(user).data,
         }
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        if not User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("No user found with this email.")
+        return value
+
+class ResetPasswordSerializer(serializers.Serializer):
+    password = serializers.CharField(write_only=True)
+    password2 = serializers.CharField(write_only=True)
+
+    def validate_password(self, value):
+        if len(value) < 8:
+            raise serializers.ValidationError("Password must be at least 8 characters long.")
+        if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]+$', value):
+            raise serializers.ValidationError(
+                "Password must include at least one uppercase letter, one lowercase letter, one number, and one special character."
+            )
+        return value
+
+    def validate(self, data):
+        if data['password'] != data['password2']:
+            raise serializers.ValidationError("Passwords do not match.")
+        return data

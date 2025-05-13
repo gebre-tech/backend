@@ -72,8 +72,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     ephemeral_key = data.get("ephemeral_key")
                     message_key = data.get("message_key")
                     message_type = data.get("type", "text")
+                    message_id = data.get("message_id")  # Get message_id from frontend
                     if not encrypted_message:
                         await self.send(text_data=json.dumps({"error": "Message cannot be empty"}))
+                        return
+                    if not message_id:
+                        await self.send(text_data=json.dumps({"error": "message_id is required"}))
                         return
 
                     receiver = await self.get_user_by_id(self.receiver_id)
@@ -87,7 +91,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         encrypted_message,
                         nonce,
                         ephemeral_key,
-                        message_key
+                        message_key,
+                        message_id  # Pass message_id
                     )
 
                     await self.channel_layer.group_send(
@@ -101,7 +106,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             "sender": self.sender_id,
                             "receiver": self.receiver_id,
                             "message_type": message_type,
-                            "timestamp": data.get("timestamp", datetime.now().isoformat())
+                            "timestamp": data.get("timestamp", datetime.now().isoformat()),
+                            "message_id": message_id  # Include message_id
                         }
                     )
                 else:
@@ -116,12 +122,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 metadata = self.pending_metadata or {}
                 file_name = metadata.get("file_name", f"unnamed_file_{datetime.now().timestamp()}")
                 file_type = metadata.get("file_type", "application/octet-stream")
-                file_size = metadata.get("file_size") or len(bytes_data)  # Use provided file_size or calculate from bytes_data
+                file_size = metadata.get("file_size") or len(bytes_data)
                 nonce = metadata.get("nonce")
                 ephemeral_key = metadata.get("ephemeral_key")
                 message_key = metadata.get("message_key")
                 message_type = metadata.get("type", "file")
                 timestamp = metadata.get("timestamp", datetime.now().isoformat())
+                message_id = metadata.get("message_id")  # Get message_id from frontend
+                if not message_id:
+                    await self.send(text_data=json.dumps({"error": "message_id is required"}))
+                    return
 
                 receiver = await self.get_user_by_id(self.receiver_id)
                 if not receiver:
@@ -134,10 +144,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     bytes_data,
                     file_name,
                     file_type,
-                    file_size,  # Pass file_size to save
+                    file_size,
                     nonce,
                     ephemeral_key,
-                    message_key
+                    message_key,
+                    message_id  # Pass message_id
                 )
 
                 file_url = f"{settings.MEDIA_URL}{message.file.name}"
@@ -153,11 +164,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         "file_name": file_name,
                         "file_type": file_type,
                         "file_url": full_file_url,
-                        "file_size": file_size,  # Include file_size in WebSocket message
+                        "file_size": file_size,
                         "nonce": nonce,
                         "ephemeral_key": ephemeral_key,
                         "message_key": message_key,
-                        "timestamp": timestamp
+                        "timestamp": timestamp,
+                        "message_id": message_id  # Include message_id
                     }
                 )
                 self.pending_metadata = None
@@ -176,16 +188,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "file_name": event.get("file_name"),
             "file_type": event.get("file_type"),
             "file_url": event.get("file_url"),
-            "file_size": event.get("file_size"),  # Include file_size
-            "timestamp": event.get("timestamp", datetime.now().isoformat())
+            "file_size": event.get("file_size"),
+            "timestamp": event.get("timestamp", datetime.now().isoformat()),
+            "message_id": event.get("message_id")  # Include message_id
         }
         await self.send(text_data=json.dumps(message_data))
 
     @database_sync_to_async
-    def save_encrypted_message(self, sender_id, receiver_id, encrypted_message, nonce, ephemeral_key, message_key):
+    def save_encrypted_message(self, sender_id, receiver_id, encrypted_message, nonce, ephemeral_key, message_key, message_id):
         sender = User.objects.get(id=sender_id)
         receiver = User.objects.get(id=receiver_id)
+        # Validate message_id uniqueness
+        if Message.objects.filter(message_id=message_id).exists():
+            raise ValueError("message_id must be unique")
         return Message.objects.create(
+            message_id=message_id,  # Store frontend message_id
             sender=sender,
             receiver=receiver,
             content=encrypted_message,
@@ -195,16 +212,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
 
     @database_sync_to_async
-    def save_file_message(self, sender_id, receiver_id, file_data, file_name, file_type, file_size, nonce, ephemeral_key, message_key):
+    def save_file_message(self, sender_id, receiver_id, file_data, file_name, file_type, file_size, nonce, ephemeral_key, message_key, message_id):
         sender = User.objects.get(id=sender_id)
         receiver = User.objects.get(id=receiver_id)
+        # Validate message_id uniqueness
+        if Message.objects.filter(message_id=message_id).exists():
+            raise ValueError("message_id must be unique")
         message = Message.objects.create(
+            message_id=message_id,  # Store frontend message_id
             sender=sender,
             receiver=receiver,
             content="",
             file_name=file_name,
             file_type=file_type,
-            file_size=file_size,  # Save file_size
+            file_size=file_size,
             nonce=nonce or '',
             ephemeral_key=ephemeral_key or '',
             message_key=message_key or ''
@@ -224,7 +245,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         messages = Message.objects.filter(
             (Q(sender_id=sender_id) & Q(receiver_id=receiver_id)) |
             (Q(sender_id=receiver_id) & Q(receiver_id=sender_id))
-        ).order_by('created_at').only('sender_id', 'receiver_id', 'content', 'nonce', 'ephemeral_key', 'message_key', 'created_at', 'file_name', 'file_type', 'file', 'file_size')
+        ).order_by('created_at').only('message_id', 'sender_id', 'receiver_id', 'content', 'nonce', 'ephemeral_key', 'message_key', 'created_at', 'file_name', 'file_type', 'file', 'file_size')
         return [
             {
                 "sender": msg.sender.id,
@@ -238,7 +259,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "file_name": msg.file_name,
                 "file_type": msg.file_type,
                 "file_url": msg.file.url if msg.file else None,
-                "file_size": msg.file_size  # Include file_size
+                "file_size": msg.file_size,
+                "message_id": msg.message_id  # Include message_id
             }
             for msg in messages
         ]

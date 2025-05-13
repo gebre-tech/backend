@@ -1,15 +1,26 @@
 from rest_framework import serializers
 from .models import Group, GroupMessage
-from authentication.serializers import UserSerializer
+from authentication.models import User
 import os
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'username']
 
 class GroupSerializer(serializers.ModelSerializer):
     creator = UserSerializer(read_only=True)
     admins = UserSerializer(read_only=True, many=True)
     members = UserSerializer(read_only=True, many=True)
-    profile_picture = serializers.ImageField(required=False, allow_null=True)
+    profile_picture = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
     unread_count = serializers.IntegerField(read_only=True)
+
+    def get_profile_picture(self, obj):
+        if obj.profile_picture:
+            request = self.context.get('request')
+            return request.build_absolute_uri(obj.profile_picture.url) if request else obj.profile_picture.url
+        return None
 
     def get_last_message(self, obj):
         if hasattr(obj, 'last_message') and obj.last_message:
@@ -26,11 +37,17 @@ class GroupMessageSerializer(serializers.ModelSerializer):
     group = serializers.SerializerMethodField()
     attachment = serializers.FileField(required=False, allow_null=True)
     file_url = serializers.SerializerMethodField()
-    file_size = serializers.SerializerMethodField()  # Added for file size
+    file_size = serializers.SerializerMethodField()
     reactions = serializers.JSONField(default=dict)
     read_by = UserSerializer(many=True, read_only=True)
 
     def get_sender(self, obj):
+        if obj.sender is None:
+            return {
+                "id": None,
+                "first_name": "System Helper",
+                "username": "system"
+            }
         return {
             "id": obj.sender.id,
             "first_name": obj.sender.first_name,
@@ -49,7 +66,7 @@ class GroupMessageSerializer(serializers.ModelSerializer):
     def get_file_size(self, obj):
         if obj.attachment and obj.attachment.file:
             try:
-                return obj.attachment.size  # Size in bytes
+                return obj.attachment.size
             except (AttributeError, OSError):
                 return None
         return None
