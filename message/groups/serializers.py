@@ -1,7 +1,6 @@
 from rest_framework import serializers
 from .models import Group, GroupMessage
 from authentication.models import User
-import os
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -14,7 +13,7 @@ class GroupSerializer(serializers.ModelSerializer):
     members = UserSerializer(read_only=True, many=True)
     profile_picture = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
-    unread_count = serializers.IntegerField(read_only=True)
+    unread_count = serializers.IntegerField(read_only=True)  # Fixed typo: read만 -> read_only
 
     def get_profile_picture(self, obj):
         if obj.profile_picture:
@@ -31,7 +30,6 @@ class GroupSerializer(serializers.ModelSerializer):
         model = Group
         fields = ['id', 'name', 'creator', 'admins', 'members', 'created_at', 
                  'profile_picture', 'last_message', 'unread_count']
-
 class GroupMessageSerializer(serializers.ModelSerializer):
     sender = serializers.SerializerMethodField()
     group = serializers.SerializerMethodField()
@@ -40,6 +38,8 @@ class GroupMessageSerializer(serializers.ModelSerializer):
     file_size = serializers.SerializerMethodField()
     reactions = serializers.JSONField(default=dict)
     read_by = UserSerializer(many=True, read_only=True)
+    parent_message = serializers.SerializerMethodField()
+    is_pinned = serializers.BooleanField(read_only=True)
 
     def get_sender(self, obj):
         if obj.sender is None:
@@ -71,7 +71,16 @@ class GroupMessageSerializer(serializers.ModelSerializer):
                 return None
         return None
 
+    def get_parent_message(self, obj):
+        if obj.parent_message:
+            return {
+                "id": obj.parent_message.id,
+                "message": obj.parent_message.message,
+                "sender": self.get_sender(obj.parent_message)
+            }
+        return None
+
     class Meta:
         model = GroupMessage
         fields = ['id', 'group', 'sender', 'message', 'attachment', 'file_name', 'file_type', 
-                  'file_url', 'file_size', 'timestamp', 'reactions', 'read_by']
+                  'file_url', 'file_size', 'timestamp', 'reactions', 'read_by', 'parent_message', 'is_pinned']

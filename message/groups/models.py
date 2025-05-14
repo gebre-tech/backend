@@ -1,5 +1,6 @@
 from django.db import models
 from authentication.models import User
+from django.db.models import Manager
 
 class Group(models.Model):
     name = models.CharField(max_length=255)
@@ -17,9 +18,13 @@ class Group(models.Model):
     def __str__(self):
         return self.name
 
+    def _is_creator_in_admins(self):
+        # Helper method to check if creator is in admins, safe for sync/async
+        return self.admins.filter(id=self.creator.id).exists()
+
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        if self.creator and self.creator not in self.admins.all():
+        if self.creator and not self._is_creator_in_admins():
             self.admins.add(self.creator)
 
 class GroupMessage(models.Model):
@@ -32,6 +37,10 @@ class GroupMessage(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
     reactions = models.JSONField(default=dict)
     read_by = models.ManyToManyField(User, related_name="read_group_messages")
+    parent_message = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True, related_name="replies"
+    )  # For replies
+    is_pinned = models.BooleanField(default=False)  # For pinned messages
 
     def __str__(self):
         sender_name = "System Helper" if self.sender is None else self.sender.username

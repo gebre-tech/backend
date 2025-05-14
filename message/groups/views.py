@@ -171,6 +171,7 @@ class SendGroupMessageView(APIView):
             attachment = request.FILES.get("attachment", None)
             file_name = request.data.get("file_name", attachment.name if attachment else None)
             file_type = request.data.get("file_type", attachment.content_type if attachment else None)
+            parent_message_id = request.data.get("parent_message_id")
 
             group = Group.objects.get(id=group_id)
             if not group.members.filter(id=request.user.id).exists():
@@ -183,14 +184,23 @@ class SendGroupMessageView(APIView):
                     logger.warning(f"User {request.user.id} uploaded file exceeding 10MB for group {group_id}")
                     return Response({"error": "File size exceeds 10MB limit"}, status=status.HTTP_400_BAD_REQUEST)
 
-            group_message = GroupMessage.objects.create(
-                group=group,
-                sender=request.user,
-                message=message,
-                attachment=attachment,
-                file_name=file_name,
-                file_type=file_type
-            )
+            kwargs = {
+                'group': group,
+                'sender': request.user,
+                'message': message,
+                'attachment': attachment,
+                'file_name': file_name,
+                'file_type': file_type,
+            }
+            if parent_message_id:
+                try:
+                    parent_message = GroupMessage.objects.get(id=parent_message_id, group=group)
+                    kwargs['parent_message'] = parent_message
+                except GroupMessage.DoesNotExist:
+                    logger.error(f"Parent message {parent_message_id} not found in group {group_id}")
+                    return Response({"error": "Parent message not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            group_message = GroupMessage.objects.create(**kwargs)
 
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
@@ -696,3 +706,77 @@ class DeleteGroupView(APIView):
         except Exception as e:
             logger.error(f"Error deleting group {group_id}: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class PinMessageView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, group_id, message_id):
+        try:
+            group = Group.objects.get(id=group_id)
+            message = GroupMessage.objects.get(id=message_id, group=group)
+            
+            is_admin_or_creator = request.user in group.admins.all() or request.user == group.creator
+            if not is_admin_or_creator:
+                logger.warning(f"User {request.user.id} unauthorized to pin message {message_id} in group {group_id}")
+                return Response({"error": "Only admins or creator can pin messages"}, status=status.HTTP_403_FORBIDDEN)
+
+            message.is_pinned = True
+            message.save()
+
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"group_{group_id}",
+                {
+                    "type": "group_message",
+                    "message": GroupMessageSerializer(message, context={'request': request}).data
+                }
+            )
+
+            logger.info(f"Message {message_id} pinned in group {group_id} by user {request.user.id}")
+            return Response(GroupMessageSerializer(message, context={'request': request}).data, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            logger.error(f"Group {group_id} not found")
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+        except GroupMessage.DoesNotExist:
+            logger.error(f"Message {message_id} not found in group {group_id}")
+            return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error pinning message {message_id} in group {group_id}: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class UnpinMessageView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, group_id, message_id):
+        try:
+            group = Group.objects.get(id=group_id)
+            message = GroupMessage.objects.get(id=message_id, group=group)
+            
+            is_admin_or_creator = request.user in group.admins.all() or request.user == group.creator
+            if not is_admin_or_creator:
+                logger.warning(f"User {request.user.id} unauthorized to unpin message {message_id} in group {group_id}")
+                return Response({"error": "Only admins or creator can unpin messages"}, status=status.HTTP_403_FORBIDDEN)
+
+            message.is_pinned = False
+            message.save()
+
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"group_{group_id}",
+                {
+                    "type": "group_message",
+                    "message": GroupMessageSerializer(message, context={'request': request}).data
+                }
+            )
+
+            logger.info(f"Message {message_id} unpinned in group {group_id} by user {request.user.id}")
+            return Response(GroupMessageSerializer(message, context={'request': request}).data, status=status.HTTP_200_OK)
+        except Group.DoesNotExist:
+            logger.error(f"Group {group_id} not found")
+            return Response({"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND)
+        except GroupMessage.DoesNotExist:
+            logger.error(f"Message {message_id} not found in group {group_id}")
+            return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error unpinning message {message_id} in group {group_id}: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)            
