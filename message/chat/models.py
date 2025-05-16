@@ -15,7 +15,7 @@ class Message(models.Model):
     ephemeral_key = models.CharField(max_length=64, blank=True, null=True)  # For NoiseNN ephemeral key (32 bytes in hex)
     handshake_key = models.CharField(max_length=64, blank=True, null=True)  # Store handshake public key (32 bytes in hex)
     message_key = models.CharField(max_length=64, blank=True, null=True)  # Store final message key (32 bytes in hex)
-
+    type = models.CharField(max_length=20, default='text')
     def __str__(self):
         base_str = f"{self.sender.username} -> {self.receiver.username} (ID: {self.message_id})"
         if self.handshake_key:

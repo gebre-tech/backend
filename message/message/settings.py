@@ -173,13 +173,7 @@ CACHES = {
         }
     }
 }
-# Initialize the database connection pool
-db_pool = pool.ThreadedConnectionPool(1, 20, **db_params)
 
-def close_db_pool():
-    db_pool.closeall()
-
-atexit.register(close_db_pool)
 
 AUTH_USER_MODEL = 'authentication.User'
 
