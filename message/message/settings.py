@@ -174,7 +174,7 @@ FILE_UPLOAD_HANDLERS = [
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-SECURE_SSL_REDIRECT = True  # Enforce HTTPS on Render
+SECURE_SSL_REDIRECT = False  # Enforce HTTPS on Render
 
 LOGGING = {
     'version': 1,
