@@ -159,7 +159,7 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-MEDIA_URL = '/media/'
+MEDIA_URL = 'https://res.cloudinary.com/dkv46o4ry/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 1048576000  # 100MB
@@ -170,8 +170,15 @@ CLOUDINARY_STORAGE = {
     'CLOUD_NAME': 'dkv46o4ry',
     'API_KEY': '856881973412382',
     'API_SECRET': 'ShYjZxA84qsb-mta6kz_W77fC2k',
-    secure=True 
+    
 }
+
+cloudinary.config(
+    cloud_name='dkv46o4ry',
+    api_key='856881973412382',
+    api_secret='ShYjZxA84qsb-mta6kz_W77fC2k',
+    secure=True
+)
 FILE_UPLOAD_HANDLERS = [
     'django.core.files.uploadhandler.MemoryFileUploadHandler',
     'django.core.files.uploadhandler.TemporaryFileUploadHandler',
