@@ -159,7 +159,6 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 1048576000  # 100MB
-INSTALLED_APPS += ['cloudinary_storage', 'cloudinary']
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 CLOUDINARY_URL = os.getenv('CLOUDINARY_URL')
 # Cloudinary settings
