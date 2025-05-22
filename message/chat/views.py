@@ -7,7 +7,6 @@ from .models import Message
 from .serializers import MessageSerializer
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.permissions import IsAuthenticated
-import cloudinary.uploader
 
 User = get_user_model()
 
@@ -34,12 +33,12 @@ class MessageListView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def post(self, request):
-        """Send a message or file and retrieve the full conversation."""
+        """Send a message and retrieve the full conversation between sender and receiver."""
         serializer = MessageSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             sender_id = request.data.get("sender")
             receiver_id = request.data.get("receiver")
-            nonce = request.data.get("nonce")
+            nonce = request.data.get("nonce")  # Optional nonce from request
 
             if not sender_id or not receiver_id:
                 return Response({"error": "Sender and Receiver IDs are required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -47,29 +46,18 @@ class MessageListView(APIView):
             sender = User.objects.get(id=sender_id)
             receiver = User.objects.get(id=receiver_id)
 
+            # Create message with optional nonce
             message_data = {
                 'sender': sender,
                 'receiver': receiver,
-                'content': serializer.validated_data.get('content', ''),
-                'nonce': nonce or '',
-                'ephemeral_key': serializer.validated_data.get('ephemeral_key', ''),
-                'message_key': serializer.validated_data.get('message_key', ''),
-                'type': serializer.validated_data.get('type', 'text'),
-                'message_id': serializer.validated_data.get('message_id'),
+                'content': serializer.validated_data['content'],
             }
-
-            if 'file' in request.FILES:
-                file_data = request.FILES['file']
-                upload_result = cloudinary.uploader.upload(
-                    file_data,
-                    folder=f'chat_files/{sender_id}',
-                    resource_type='auto'
-                )
-                message_data['file'] = upload_result['secure_url']
-                message_data['file_name'] = upload_result['original_filename']
-                message_data['file_type'] = upload_result['resource_type'] + '/' + upload_result['format']
-                message_data['file_size'] = upload_result['bytes']
-                message_data['type'] = 'file'
+            if 'file' in serializer.validated_data:
+                message_data['file'] = serializer.validated_data['file']
+                message_data['file_name'] = serializer.validated_data.get('file_name')
+                message_data['file_type'] = serializer.validated_data.get('file_type')
+            if nonce is not None:
+                message_data['nonce'] = nonce
 
             Message.objects.create(**message_data)
 

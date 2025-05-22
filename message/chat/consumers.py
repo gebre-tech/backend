@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime  # Added import
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.db.models import Q
@@ -8,7 +8,7 @@ from .models import Message
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.exceptions import AuthenticationFailed
-import cloudinary.uploader
+from django.core.files.base import ContentFile
 from django.conf import settings
 
 User = get_user_model()
@@ -73,10 +73,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     logger.debug("Sent pong response")
                     return
 
-                # Handle history request
+                # Handle history request with pagination
                 if data.get("request_history"):
                     page = data.get("page", 1)
-                    page_size = data.get("page_size", 50)
+                    page_size = data.get("page_size", 50)  # Default to 50 messages per page
                     messages = await self.get_chat_history(self.sender_id, self.receiver_id, page, page_size)
                     await self.send(text_data=json.dumps({"messages": messages}))
                     logger.debug(f"Sent {len(messages)} history messages for page {page}")
@@ -158,30 +158,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     await self.send(text_data=json.dumps({"error": "User does not exist"}))
                     return
 
-                # Upload file to Cloudinary
-                upload_result = await database_sync_to_async(cloudinary.uploader.upload)(
-                    bytes_data,
-                    folder=f'chat_files/{self.sender_id}',
-                    resource_type='auto'
-                )
-
-                # Safely determine file_type
-                resource_type = upload_result.get('resource_type', 'raw')
-                file_format = upload_result.get('format')
-                if file_format:
-                    derived_file_type = f"{resource_type}/{file_format}"
-                else:
-                    # Fallback to metadata file_type or default
-                    derived_file_type = file_type if file_type != "application/octet-stream" else f"{resource_type}/unknown"
-                    logger.warning(f"Cloudinary upload missing 'format' for file: {file_name}, using {derived_file_type}")
-
                 message = await self.save_file_message(
                     self.sender_id,
                     self.receiver_id,
-                    upload_result['secure_url'],
+                    bytes_data,
                     file_name,
-                    derived_file_type,
-                    upload_result['bytes'],
+                    file_type,
+                    file_size,
                     nonce,
                     ephemeral_key,
                     message_key,
@@ -189,7 +172,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     message_type
                 )
 
-                file_url = upload_result['secure_url']
+                file_url = f"{settings.MEDIA_URL}{message.file.name}"
+                full_file_url = f"{settings.SITE_URL}{file_url}"
 
                 await self.channel_layer.group_send(
                     self.room_group_name,
@@ -199,9 +183,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         "receiver": self.receiver_id,
                         "message_type": message_type,
                         "file_name": file_name,
-                        "file_type": derived_file_type,
-                        "file_url": file_url,
-                        "file_size": upload_result['bytes'],
+                        "file_type": file_type,
+                        "file_url": full_file_url,
+                        "file_size": file_size,
                         "nonce": nonce,
                         "ephemeral_key": ephemeral_key,
                         "message_key": message_key,
@@ -211,8 +195,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 )
                 self.pending_metadata = None
             except Exception as e:
-                logger.error(f"Error processing file: {str(e)}. Upload result: {upload_result}", exc_info=True)
-                await self.send(text_data=json.dumps({"error": f"Failed to process file: {str(e)}"}))
+                logger.error(f"Error processing file: {str(e)}")
+                await self.send(text_data=json.dumps({"error": str(e)}))
 
     async def chat_message(self, event):
         message_data = {
@@ -251,7 +235,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
 
     @database_sync_to_async
-    def save_file_message(self, sender_id, receiver_id, file_url, file_name, file_type, file_size, nonce, ephemeral_key, message_key, message_id, message_type='file'):
+    def save_file_message(self, sender_id, receiver_id, file_data, file_name, file_type, file_size, nonce, ephemeral_key, message_key, message_id, message_type='file'):
         sender = User.objects.get(id=sender_id)
         receiver = User.objects.get(id=receiver_id)
         if Message.objects.filter(message_id=message_id).exists():
@@ -261,7 +245,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
             sender=sender,
             receiver=receiver,
             content="",
-            file=file_url,  # Store Cloudinary URL directly
             file_name=file_name,
             file_type=file_type,
             file_size=file_size,
@@ -270,6 +253,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             message_key=message_key or '',
             type=message_type
         )
+        message.file.save(file_name, ContentFile(file_data))
         return message
 
     @database_sync_to_async
@@ -303,7 +287,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     "type": msg.type,
                     "file_name": msg.file_name,
                     "file_type": msg.file_type,
-                    "file_url": msg.file.url if msg.file else None,  # Use Cloudinary URL
+                    "file_url": msg.file.url if msg.file else None,
                     "file_size": msg.file_size,
                     "message_id": msg.message_id
                 }
@@ -318,7 +302,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
         jwt_auth = JWTAuthentication()
         validated_token = jwt_auth.get_validated_token(token)
         return jwt_auth.get_user(validated_token)
-
 
 class GlobalConsumer(AsyncWebsocketConsumer):
     async def connect(self):
