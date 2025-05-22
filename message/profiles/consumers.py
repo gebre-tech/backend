@@ -40,19 +40,23 @@ class ProfileConsumer(AsyncWebsocketConsumer):
         logger.info(f"WebSocket disconnected for group {self.group_name}, code={close_code}")
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
-    async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
-            action = data.get('type')
-            logger.debug(f"Received WebSocket message: {data}")
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in WebSocket message: {str(e)}")
-            return
-
-        if action == 'update_last_seen':
-            await self.handle_update_last_seen()
-        elif action == 'update_profile':
-            await self.handle_update_profile(data)
+        async def receive(self, text_data):
+            try:
+                data = json.loads(text_data)
+                action = data.get('type')
+                
+                if action == 'update_last_seen':
+                    timestamp = data.get('timestamp')
+                    if timestamp:
+                        await self.handle_update_last_seen(timestamp)
+                    else:
+                        await self.handle_update_last_seen()
+                        
+                elif action == 'update_profile':
+                    await self.handle_update_profile(data)
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in WebSocket message: {str(e)}")
 
     @database_sync_to_async
     def _update_last_seen_db(self):
