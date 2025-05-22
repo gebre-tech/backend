@@ -1,9 +1,13 @@
+
 from dotenv import load_dotenv
 load_dotenv()
 import os
 import dj_database_url
 from pathlib import Path
 from datetime import timedelta
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 import atexit
 from concurrent.futures import ThreadPoolExecutor
 
@@ -165,7 +169,8 @@ CLOUDINARY_URL = os.getenv('CLOUDINARY_URL')
 CLOUDINARY_STORAGE = {
     'CLOUD_NAME': 'dkv46o4ry',
     'API_KEY': '856881973412382',
-    'API_SECRET': 'ShYjZxA84qsb-mta6kz_W77fC2k'
+    'API_SECRET': 'ShYjZxA84qsb-mta6kz_W77fC2k',
+    secure=True 
 }
 FILE_UPLOAD_HANDLERS = [
     'django.core.files.uploadhandler.MemoryFileUploadHandler',
