@@ -99,6 +99,7 @@ class ProfileConsumer(AsyncWebsocketConsumer):
 
     async def handle_update_profile(self, data):
         updated_data = await self._update_profile_db(data)
+        logger.info(f"Sending profile update to group {self.group_name}: {updated_data}")
         await self.channel_layer.group_send(
             self.group_name,
             {
@@ -113,6 +114,7 @@ class ProfileConsumer(AsyncWebsocketConsumer):
         )
 
     async def profile_update(self, event):
+        logger.debug(f"Sending WebSocket message to client: {event}")
         await self.send(text_data=json.dumps({
             'type': 'profile_update',
             'username': event['username'],

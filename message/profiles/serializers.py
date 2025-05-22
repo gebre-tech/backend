@@ -1,7 +1,8 @@
-# profiles/serializers.py
 from rest_framework import serializers
 from .models import Profile
 from authentication.models import User
+import cloudinary
+from django.conf import settings
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -13,13 +14,20 @@ class ProfileSerializer(serializers.ModelSerializer):
     profile_picture = serializers.SerializerMethodField()
 
     def get_profile_picture(self, obj):
-        #if obj.profile_picture:
-            # Always return the absolute URL based on the file path
-          #  from django.conf import settings
-          #  base_url = settings.SITE_URL.rstrip('/')  # e.g., 'http://127.0.0.1:8000'
-          #  relative_url = obj.profile_picture.url  # e.g., '/media/profile_pics/profile_MQw2SEI.jpg'
-          #  return f"{base_url}{relative_url}"
-        return obj.profile_picture.url if obj.profile_picture else None
+        if obj.profile_picture:
+            # If it's already a URL (from Cloudinary), return it directly
+            if obj.profile_picture.startswith('http'):
+                return obj.profile_picture
+            
+            # If it's a Cloudinary public_id, construct the URL
+            if hasattr(settings, 'CLOUDINARY_URL'):
+                return cloudinary.CloudinaryImage(obj.profile_picture).build_url()
+            
+            # Fallback to local media URL
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.profile_picture.url)
+        return None
 
     class Meta:
         model = Profile

@@ -1,2 +1,2 @@
-./message/venv/
-./message/env
+message/venv/
+.env

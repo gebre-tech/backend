@@ -9,6 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
+import cloudinary
+import cloudinary.uploader
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,7 +21,7 @@ class CreateOrUpdateProfileView(APIView):
     def get(self, request):
         try:
             profile = Profile.objects.get(user=request.user)
-            serializer = ProfileSerializer(profile)  # No request context needed
+            serializer = ProfileSerializer(profile, context={'request': request})
             logger.debug(f"GET profile serialized data: {serializer.data}")
             return Response(serializer.data)
         except Profile.DoesNotExist:
@@ -33,24 +35,33 @@ class CreateOrUpdateProfileView(APIView):
         try:
             logger.debug(f"Received POST data: {data}, FILES: {request.FILES}")
 
-            # Check if profile exists
-            try:
-                profile = Profile.objects.get(user=request.user)
-                profile.bio = data.get("bio", profile.bio)
-                if "profile_picture" in request.FILES:
-                    image = request.FILES["profile_picture"]
-                    if image.size > 5 * 1024 * 1024:  # 5MB limit
-                        return Response({"error": "Image must be under 5MB"}, status=status.HTTP_400_BAD_REQUEST)
-                    if image.content_type not in ['image/jpeg', 'image/png']:
-                        return Response({"error": "Only JPEG and PNG are supported"}, status=status.HTTP_400_BAD_REQUEST)
-                    profile.profile_picture = image
-                profile.save()
-            except Profile.DoesNotExist:
-                profile = Profile.objects.create(
-                    user=request.user,
-                    bio=data.get("bio", ""),
-                    profile_picture=request.FILES.get("profile_picture", None)
+            # Get or create profile
+            profile, created = Profile.objects.get_or_create(user=request.user)
+            
+            # Update profile fields
+            profile.bio = data.get("bio", profile.bio)
+            
+            # Handle profile picture upload to Cloudinary
+            if "profile_picture" in request.FILES:
+                image = request.FILES["profile_picture"]
+                
+                # Validate image
+                if image.size > 5 * 1024 * 1024:  # 5MB limit
+                    return Response({"error": "Image must be under 5MB"}, status=status.HTTP_400_BAD_REQUEST)
+                if image.content_type not in ['image/jpeg', 'image/png']:
+                    return Response({"error": "Only JPEG and PNG are supported"}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Upload to Cloudinary
+                upload_result = cloudinary.uploader.upload(
+                    image,
+                    folder="profile_pictures",
+                    public_id=f"user_{request.user.id}",
+                    overwrite=True,
+                    resource_type="image"
                 )
+                profile.profile_picture = upload_result['secure_url']
+            
+            profile.save()
 
             # Update user fields
             user = request.user
@@ -59,8 +70,8 @@ class CreateOrUpdateProfileView(APIView):
             user.last_name = data.get("last_name", user.last_name)
             user.save()
 
-            # Serialize without request context
-            serializer = ProfileSerializer(profile)
+            # Serialize with request context
+            serializer = ProfileSerializer(profile, context={'request': request})
             logger.debug(f"POST profile serialized data: {serializer.data}")
 
             # Send WebSocket update
@@ -83,7 +94,7 @@ class CreateOrUpdateProfileView(APIView):
             else:
                 logger.warning("Channel layer not available")
 
-            return Response(serializer.data, status=status.HTTP_200_OK if profile.pk else status.HTTP_201_CREATED)
+            return Response(serializer.data, status=status.HTTP_200_OK if not created else status.HTTP_201_CREATED)
         
         except Exception as e:
             logger.error(f"Error in POST profile: {str(e)}", exc_info=True)
