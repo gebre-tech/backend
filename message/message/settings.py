@@ -156,8 +156,9 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 1048576000  # 100MB
-
-DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+INSTALLED_APPS += ['cloudinary_storage', 'cloudinary']
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+CLOUDINARY_URL = os.getenv('CLOUDINARY_URL')
 FILE_UPLOAD_HANDLERS = [
     'django.core.files.uploadhandler.MemoryFileUploadHandler',
     'django.core.files.uploadhandler.TemporaryFileUploadHandler',
