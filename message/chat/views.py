@@ -1,17 +1,15 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from .models import Message
 from .serializers import MessageSerializer
-from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.permissions import IsAuthenticated
+from django.utils import timezone  # Added import
 import cloudinary.uploader
 import logging
-from django.conf import settings
-from django.utils import timezone
-
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -25,8 +23,8 @@ class FileUploadView(APIView):
                 return Response({"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
 
             file = request.FILES['file']
-            # Validate file size
-            if file.size > 100 * 1024 * 1024:  # 100MB limit
+            # Validate file size (100MB limit)
+            if file.size > 100 * 1024 * 1024:
                 return Response({"error": "File must be under 100MB"}, status=status.HTTP_400_BAD_REQUEST)
 
             # Validate file type
@@ -40,7 +38,7 @@ class FileUploadView(APIView):
                 folder=f"chat_files/user_{request.user.id}",
                 public_id=f"file_{request.user.id}_{int(timezone.now().timestamp())}",
                 overwrite=True,
-                resource_type="auto"  # Automatically detect resource type (image, video, etc.)
+                resource_type="auto"
             )
 
             return Response({
@@ -98,6 +96,7 @@ class MessageListView(APIView):
                 message_data['file'] = serializer.validated_data['file']
                 message_data['file_name'] = serializer.validated_data.get('file_name')
                 message_data['file_type'] = serializer.validated_data.get('file_type')
+                message_data['public_id'] = serializer.validated_data.get('public_id')
             if nonce is not None:
                 message_data['nonce'] = nonce
 
