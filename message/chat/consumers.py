@@ -1,156 +1,202 @@
 import json
 import logging
+from datetime import datetime  # Added import
 from channels.generic.websocket import AsyncWebsocketConsumer
-from django.contrib.auth import get_user_model
-from django.core.files.base import ContentFile
-from django.db import transaction
-from django.conf import settings
 from channels.db import database_sync_to_async
+from django.db.models import Q
 from .models import Message
-from .serializers import MessageSerializer
-import base64
-import os
+from django.contrib.auth import get_user_model
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.exceptions import AuthenticationFailed
+from django.core.files.base import ContentFile
+from django.conf import settings
 
-logger = logging.getLogger(__name__)
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 class ChatConsumer(AsyncWebsocketConsumer):
-    async def connect(self):
-        self.sender_id = self.scope['url_route']['kwargs']['sender_id']
-        self.receiver_id = self.scope['url_route']['kwargs']['receiver_id']
-        self.room_group_name = f'chat_{min(self.sender_id, self.receiver_id)}_{max(self.sender_id, self.receiver_id)}'
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pending_metadata = None
 
+    async def connect(self):
+        self.room_group_name = None
+        self.sender_id = self.scope["url_route"]["kwargs"]["sender_id"]
+        self.receiver_id = self.scope["url_route"]["kwargs"]["receiver_id"]
+
+        try:
+            self.sender_id = int(self.sender_id)
+            self.receiver_id = int(self.receiver_id)
+        except ValueError:
+            logger.error("Invalid sender or receiver ID")
+            await self.close(code=1000)
+            return
+
+        query_string = self.scope['query_string'].decode()
+        token = dict(q.split('=') for q in query_string.split('&') if '=' in q).get('token', None)
+        if not token:
+            logger.error("No token provided")
+            await self.close(code=1008)
+            return
+
+        try:
+            user = await self.authenticate_token(token)
+            if str(user.id) != str(self.sender_id):
+                logger.error("User ID does not match sender ID")
+                await self.close(code=1008)
+                return
+            self.user = user
+        except AuthenticationFailed as e:
+            logger.error(f"Authentication failed: {str(e)}")
+            await self.close(code=1008)
+            return
+
+        self.room_group_name = f"chat_{min(self.sender_id, self.receiver_id)}_{max(self.sender_id, self.receiver_id)}"
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
+        logger.debug(f"WebSocket connected for {self.sender_id} to {self.receiver_id}")
 
     async def disconnect(self, close_code):
-        await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
+        if self.room_group_name:
+            await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
+        logger.debug(f"WebSocket disconnected: {close_code}")
 
     async def receive(self, text_data=None, bytes_data=None):
         if text_data:
             try:
-                text_data_json = json.loads(text_data)
-                message_id = text_data_json.get('message_id')
-                content = text_data_json.get('content', '')
-                nonce = text_data_json.get('nonce', '')
-                ephemeral_key = text_data_json.get('ephemeral_key', '')
-                message_key = text_data_json.get('message_key', '')
-                message_type = text_data_json.get('type', 'text')
+                data = json.loads(text_data)
+                logger.debug(f"Received message: {data}")
 
-                if message_type == 'text':
-                    message = await self.save_text_message(
-                        self.sender_id, self.receiver_id, content, nonce,
-                        ephemeral_key, message_key, message_id
+                # Handle ping
+                if data.get("type") == "ping":
+                    await self.send(text_data=json.dumps({"type": "pong"}))
+                    logger.debug("Sent pong response")
+                    return
+
+                # Handle history request with pagination
+                if data.get("request_history"):
+                    page = data.get("page", 1)
+                    page_size = data.get("page_size", 50)  # Default to 50 messages per page
+                    messages = await self.get_chat_history(self.sender_id, self.receiver_id, page, page_size)
+                    await self.send(text_data=json.dumps({"messages": messages}))
+                    logger.debug(f"Sent {len(messages)} history messages for page {page}")
+                    return
+
+                # Handle regular message
+                if "message" in data:
+                    encrypted_message = data.get("message")
+                    nonce = data.get("nonce")
+                    ephemeral_key = data.get("ephemeral_key")
+                    message_key = data.get("message_key")
+                    message_type = data.get("type", "text")
+                    message_id = data.get("message_id")
+                    if not encrypted_message:
+                        await self.send(text_data=json.dumps({"error": "Message cannot be empty"}))
+                        return
+                    if not message_id:
+                        await self.send(text_data=json.dumps({"error": "message_id is required"}))
+                        return
+
+                    receiver = await self.get_user_by_id(self.receiver_id)
+                    if not receiver:
+                        await self.send(text_data=json.dumps({"error": "User does not exist"}))
+                        return
+
+                    await self.save_encrypted_message(
+                        self.sender_id,
+                        self.receiver_id,
+                        encrypted_message,
+                        nonce,
+                        ephemeral_key,
+                        message_key,
+                        message_id,
+                        message_type
                     )
-                    serialized_message = MessageSerializer(message, context={'request': None}).data
+
                     await self.channel_layer.group_send(
                         self.room_group_name,
                         {
-                            'type': 'chat_message',
-                            'message': serialized_message
+                            "type": "chat_message",
+                            "message": encrypted_message,
+                            "nonce": nonce,
+                            "ephemeral_key": ephemeral_key,
+                            "message_key": message_key,
+                            "sender": self.sender_id,
+                            "receiver": self.receiver_id,
+                            "message_type": message_type,
+                            "timestamp": data.get("timestamp", datetime.now().isoformat()),
+                            "message_id": message_id
                         }
                     )
-                elif message_type in ['photo', 'video', 'audio', 'file']:
-                    # Store metadata for file message
-                    self.file_metadata = {
-                        'sender_id': self.sender_id,
-                        'receiver_id': self.receiver_id,
-                        'file_name': text_data_json.get('file_name'),
-                        'file_type': text_data_json.get('file_type'),
-                        'file_size': text_data_json.get('file_size'),
-                        'nonce': nonce,
-                        'ephemeral_key': ephemeral_key,
-                        'message_key': message_key,
-                        'message_id': message_id,
-                        'message_type': message_type
-                    }
+                else:
+                    self.pending_metadata = data
             except json.JSONDecodeError:
-                logger.error("Invalid JSON data received: %s", text_data)
-                await self.send(text_data=json.dumps({'error': 'Invalid JSON data'}))
+                logger.error("Invalid JSON received")
+                await self.send(text_data=json.dumps({"error": "Invalid message format"}))
             except Exception as e:
-                logger.error("Error processing text data: %s", str(e))
-                await self.send(text_data=json.dumps({'error': str(e)}))
+                logger.error(f"Error processing message: {str(e)}")
+                await self.send(text_data=json.dumps({"error": str(e)}))
 
-        elif bytes_data and hasattr(self, 'file_metadata'):
+        if bytes_data:
             try:
+                metadata = self.pending_metadata or {}
+                file_name = metadata.get("file_name", f"unnamed_file_{datetime.now().timestamp()}")
+                file_type = metadata.get("file_type", "application/octet-stream")
+                file_size = metadata.get("file_size") or len(bytes_data)
+                nonce = metadata.get("nonce")
+                ephemeral_key = metadata.get("ephemeral_key")
+                message_key = metadata.get("message_key")
+                message_type = metadata.get("type", "file")
+                timestamp = metadata.get("timestamp", datetime.now().isoformat())
+                message_id = metadata.get("message_id")
+                if not message_id:
+                    await self.send(text_data=json.dumps({"error": "message_id is required"}))
+                    return
+
+                receiver = await self.get_user_by_id(self.receiver_id)
+                if not receiver:
+                    await self.send(text_data=json.dumps({"error": "User does not exist"}))
+                    return
+
                 message = await self.save_file_message(
-                    self.file_metadata['sender_id'],
-                    self.file_metadata['receiver_id'],
+                    self.sender_id,
+                    self.receiver_id,
                     bytes_data,
-                    self.file_metadata['file_name'],
-                    self.file_metadata['file_type'],
-                    self.file_metadata['file_size'],
-                    self.file_metadata['nonce'],
-                    self.file_metadata['ephemeral_key'],
-                    self.file_metadata['message_key'],
-                    self.file_metadata['message_id'],
-                    self.file_metadata['message_type']
+                    file_name,
+                    file_type,
+                    file_size,
+                    nonce,
+                    ephemeral_key,
+                    message_key,
+                    message_id,
+                    message_type
                 )
-                serialized_message = MessageSerializer(message, context={'request': None}).data
+
+                file_url = f"{settings.MEDIA_URL}{message.file.name}"
+                full_file_url = f"{settings.SITE_URL}{file_url}"
+
                 await self.channel_layer.group_send(
                     self.room_group_name,
                     {
-                        'type': 'chat_message',
-                        'message': serialized_message
+                        "type": "chat_message",
+                        "sender": self.sender_id,
+                        "receiver": self.receiver_id,
+                        "message_type": message_type,
+                        "file_name": file_name,
+                        "file_type": file_type,
+                        "file_url": full_file_url,
+                        "file_size": file_size,
+                        "nonce": nonce,
+                        "ephemeral_key": ephemeral_key,
+                        "message_key": message_key,
+                        "timestamp": timestamp,
+                        "message_id": message_id
                     }
                 )
-                logger.info(f"File message saved with Cloudinary URL: {serialized_message['file_url']}")
-                del self.file_metadata
+                self.pending_metadata = None
             except Exception as e:
-                logger.error("Error saving file message: %s", str(e))
-                await self.send(text_data=json.dumps({'error': str(e)}))
-
-    async def chat_message(self, event):
-        message = event['message']
-        await self.send(text_data=json.dumps(message))
-
-    @database_sync_to_async
-    def save_text_message(self, sender_id, receiver_id, content, nonce, ephemeral_key, message_key, message_id):
-        sender = User.objects.get(id=sender_id)
-        receiver = User.objects.get(id=receiver_id)
-        if Message.objects.filter(message_id=message_id).exists():
-            raise ValueError("message_id must be unique")
-        return Message.objects.create(
-            message_id=message_id,
-            sender=sender,
-            receiver=receiver,
-            content=content,
-            nonce=nonce,
-            ephemeral_key=ephemeral_key,
-            message_key=message_key,
-            type='text'
-        )
-
-    @database_sync_to_async
-    def save_file_message(self, sender_id, receiver_id, file_data, file_name, file_type, file_size, nonce, ephemeral_key, message_key, message_id, message_type='file'):
-        sender = User.objects.get(id=sender_id)
-        receiver = User.objects.get(id=receiver_id)
-        if Message.objects.filter(message_id=message_id).exists():
-            raise ValueError("message_id must be unique")
-
-        # Create a message instance without saving the file yet
-        message = Message(
-            message_id=message_id,
-            sender=sender,
-            receiver=receiver,
-            content="",
-            file_name=file_name,
-            file_type=file_type,
-            file_size=file_size,
-            nonce=nonce or '',
-            ephemeral_key=ephemeral_key or '',
-            message_key=message_key or '',
-            type=message_type
-        )
-
-        # Save the file to Cloudinary
-        message.file.save(file_name, ContentFile(file_data))
-        message.save()
-
-        # Log the Cloudinary URL for debugging
-        logger.debug(f"File uploaded to Cloudinary: {message.file.url}")
-
-        return message
+                logger.error(f"Error processing file: {str(e)}")
+                await self.send(text_data=json.dumps({"error": str(e)}))
 
     async def chat_message(self, event):
         message_data = {
@@ -187,6 +233,28 @@ class ChatConsumer(AsyncWebsocketConsumer):
             message_key=message_key or '',
             type=message_type
         )
+
+    @database_sync_to_async
+    def save_file_message(self, sender_id, receiver_id, file_data, file_name, file_type, file_size, nonce, ephemeral_key, message_key, message_id, message_type='file'):
+        sender = User.objects.get(id=sender_id)
+        receiver = User.objects.get(id=receiver_id)
+        if Message.objects.filter(message_id=message_id).exists():
+            raise ValueError("message_id must be unique")
+        message = Message.objects.create(
+            message_id=message_id,
+            sender=sender,
+            receiver=receiver,
+            content="",
+            file_name=file_name,
+            file_type=file_type,
+            file_size=file_size,
+            nonce=nonce or '',
+            ephemeral_key=ephemeral_key or '',
+            message_key=message_key or '',
+            type=message_type
+        )
+        message.file.save(file_name, ContentFile(file_data))
+        return message
 
     @database_sync_to_async
     def get_user_by_id(self, user_id):

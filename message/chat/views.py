@@ -33,51 +33,33 @@ class MessageListView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def post(self, request):
-        """Send a message or file and retrieve the full conversation."""
+        """Send a message and retrieve the full conversation between sender and receiver."""
         serializer = MessageSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             sender_id = request.data.get("sender")
             receiver_id = request.data.get("receiver")
-            nonce = request.data.get("nonce")
-            file_data = request.FILES.get("file")
-            file_name = request.data.get("file_name")
-            file_type = request.data.get("file_type")
-            file_size = request.data.get("file_size")
-            message_type = request.data.get("type", "text")
-            message_id = request.data.get("message_id")
+            nonce = request.data.get("nonce")  # Optional nonce from request
 
-            if not sender_id or not receiver_id or not message_id:
-                return Response({"error": "Sender, Receiver IDs, and message_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+            if not sender_id or not receiver_id:
+                return Response({"error": "Sender and Receiver IDs are required."}, status=status.HTTP_400_BAD_REQUEST)
 
-            try:
-                sender = User.objects.get(id=sender_id)
-                receiver = User.objects.get(id=receiver_id)
-            except User.DoesNotExist:
-                return Response({"error": "User does not exist."}, status=status.HTTP_400_BAD_REQUEST)
+            sender = User.objects.get(id=sender_id)
+            receiver = User.objects.get(id=receiver_id)
 
+            # Create message with optional nonce
             message_data = {
                 'sender': sender,
                 'receiver': receiver,
-                'content': serializer.validated_data.get('content', ''),
-                'nonce': nonce or '',
-                'ephemeral_key': serializer.validated_data.get('ephemeral_key', ''),
-                'message_key': serializer.validated_data.get('message_key', ''),
-                'type': message_type,
-                'message_id': message_id
+                'content': serializer.validated_data['content'],
             }
+            if 'file' in serializer.validated_data:
+                message_data['file'] = serializer.validated_data['file']
+                message_data['file_name'] = serializer.validated_data.get('file_name')
+                message_data['file_type'] = serializer.validated_data.get('file_type')
+            if nonce is not None:
+                message_data['nonce'] = nonce
 
-            if file_data:
-                message_data['file_name'] = file_name or file_data.name
-                message_data['file_type'] = file_type or file_data.content_type
-                message_data['file_size'] = file_size or file_data.size
-                message_data['type'] = message_type or ('photo' if file_type.startswith('image/') else
-                                                      'video' if file_type.startswith('video/') else
-                                                      'audio' if file_type.startswith('audio/') else 'file')
-
-            message = Message.objects.create(**message_data)
-            if file_data:
-                message.file.save(file_data.name, file_data)
-                message.save()
+            Message.objects.create(**message_data)
 
             messages = Message.objects.filter(
                 (Q(sender_id=sender_id) & Q(receiver_id=receiver_id)) |
