@@ -61,6 +61,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
         logger.debug(f"WebSocket disconnected: {close_code}")
 
+    # chat/consumers.py
     async def receive(self, text_data=None, bytes_data=None):
         if text_data:
             try:
@@ -76,7 +77,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 # Handle history request with pagination
                 if data.get("request_history"):
                     page = data.get("page", 1)
-                    page_size = data.get("page_size", 50)  # Default to 50 messages per page
+                    page_size = data.get("page_size", 50)
                     messages = await self.get_chat_history(self.sender_id, self.receiver_id, page, page_size)
                     await self.send(text_data=json.dumps({"messages": messages}))
                     logger.debug(f"Sent {len(messages)} history messages for page {page}")
@@ -128,6 +129,70 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             "message_id": message_id
                         }
                     )
+                # Handle file metadata (Cloudinary URL)
+                elif "file_url" in data:
+                    file_name = data.get("file_name", f"unnamed_file_{datetime.now().timestamp()}")
+                    file_type = data.get("file_type", "application/octet-stream")
+                    file_size = data.get("file_size")
+                    nonce = data.get("nonce")
+                    ephemeral_key = data.get("ephemeral_key")
+                    message_key = data.get("message_key")
+                    message_type = data.get("type", "file")
+                    timestamp = data.get("timestamp", datetime.now().isoformat())
+                    message_id = data.get("message_id")
+                    file_url = data.get("file_url")
+                    public_id = data.get("public_id")  # Optional: store Cloudinary public_id
+
+                    if not message_id:
+                        await self.send(text_data=json.dumps({"error": "message_id is required"}))
+                        return
+
+                    receiver = await self.get_user_by_id(self.receiver_id)
+                    if not receiver:
+                        await self.send(text_data=json.dumps({"error": "User does not exist"}))
+                        return
+
+                    # Validate file type and size
+                    allowed_types = ['image/jpeg', 'image/png', 'video/mp4', 'audio/mpeg', 'application/pdf']
+                    if file_type not in allowed_types:
+                        raise ValueError("Unsupported file type")
+                    if file_size > 100 * 1024 * 1024:
+                        raise ValueError("File size exceeds 100MB limit")
+
+                    message = await self.save_cloudinary_file_message(
+                        self.sender_id,
+                        self.receiver_id,
+                        file_url,
+                        file_name,
+                        file_type,
+                        file_size,
+                        nonce,
+                        ephemeral_key,
+                        message_key,
+                        message_id,
+                        message_type,
+                        public_id
+                    )
+
+                    await self.channel_layer.group_send(
+                        self.room_group_name,
+                        {
+                            "type": "chat_message",
+                            "sender": self.sender_id,
+                            "receiver": self.receiver_id,
+                            "message_type": message_type,
+                            "file_name": file_name,
+                            "file_type": file_type,
+                            "file_url": file_url,
+                            "file_size": file_size,
+                            "nonce": nonce,
+                            "ephemeral_key": ephemeral_key,
+                            "message_key": message_key,
+                            "timestamp": timestamp,
+                            "message_id": message_id,
+                            "public_id": public_id
+                        }
+                    )
                 else:
                     self.pending_metadata = data
             except json.JSONDecodeError:
@@ -137,67 +202,30 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 logger.error(f"Error processing message: {str(e)}")
                 await self.send(text_data=json.dumps({"error": str(e)}))
 
-        if bytes_data:
-            try:
-                metadata = self.pending_metadata or {}
-                file_name = metadata.get("file_name", f"unnamed_file_{datetime.now().timestamp()}")
-                file_type = metadata.get("file_type", "application/octet-stream")
-                file_size = metadata.get("file_size") or len(bytes_data)
-                nonce = metadata.get("nonce")
-                ephemeral_key = metadata.get("ephemeral_key")
-                message_key = metadata.get("message_key")
-                message_type = metadata.get("type", "file")
-                timestamp = metadata.get("timestamp", datetime.now().isoformat())
-                message_id = metadata.get("message_id")
-                if not message_id:
-                    await self.send(text_data=json.dumps({"error": "message_id is required"}))
-                    return
-
-                receiver = await self.get_user_by_id(self.receiver_id)
-                if not receiver:
-                    await self.send(text_data=json.dumps({"error": "User does not exist"}))
-                    return
-
-                message = await self.save_file_message(
-                    self.sender_id,
-                    self.receiver_id,
-                    bytes_data,
-                    file_name,
-                    file_type,
-                    file_size,
-                    nonce,
-                    ephemeral_key,
-                    message_key,
-                    message_id,
-                    message_type
-                )
-
-                file_url = f"{settings.MEDIA_URL}{message.file.name}"
-                full_file_url = f"{settings.SITE_URL}{file_url}"
-
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {
-                        "type": "chat_message",
-                        "sender": self.sender_id,
-                        "receiver": self.receiver_id,
-                        "message_type": message_type,
-                        "file_name": file_name,
-                        "file_type": file_type,
-                        "file_url": full_file_url,
-                        "file_size": file_size,
-                        "nonce": nonce,
-                        "ephemeral_key": ephemeral_key,
-                        "message_key": message_key,
-                        "timestamp": timestamp,
-                        "message_id": message_id
-                    }
-                )
-                self.pending_metadata = None
-            except Exception as e:
-                logger.error(f"Error processing file: {str(e)}")
-                await self.send(text_data=json.dumps({"error": str(e)}))
-
+        @database_sync_to_async
+        def save_cloudinary_file_message(self, sender_id, receiver_id, file_url, file_name, file_type, file_size, nonce, ephemeral_key, message_key, message_id, message_type='file', public_id=None):
+            sender = User.objects.get(id=sender_id)
+            receiver = User.objects.get(id=receiver_id)
+            if Message.objects.filter(message_id=message_id).exists():
+                raise ValueError("message_id must be unique")
+            message = Message.objects.create(
+                message_id=message_id,
+                sender=sender,
+                receiver=receiver,
+                content="",
+                file_name=file_name,
+                file_type=file_type,
+                file_size=file_size,
+                nonce=nonce or '',
+                ephemeral_key=ephemeral_key or '',
+                message_key=message_key or '',
+                type=message_type,
+                file=CloudinaryFieldResource(file_url, resource_type='auto')  # Store Cloudinary URL
+            )
+            if public_id:
+                message.public_id = public_id  # Assuming you add a public_id field to the Message model
+                message.save()
+            return message
     async def chat_message(self, event):
         message_data = {
             "sender": event["sender"],
@@ -234,12 +262,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
             type=message_type
         )
 
+    # chat/consumers.py
     @database_sync_to_async
     def save_file_message(self, sender_id, receiver_id, file_data, file_name, file_type, file_size, nonce, ephemeral_key, message_key, message_id, message_type='file'):
         sender = User.objects.get(id=sender_id)
         receiver = User.objects.get(id=receiver_id)
+        
+        # Validate file size (e.g., 100MB limit, matching DATA_UPLOAD_MAX_MEMORY_SIZE)
+        if file_size > 100 * 1024 * 1024:
+            raise ValueError("File size exceeds 100MB limit")
+        
+        # Validate file type
+        allowed_types = ['image/jpeg', 'image/png', 'video/mp4', 'audio/mpeg', 'application/pdf']
+        if file_type not in allowed_types:
+            raise ValueError("Unsupported file type")
+
         if Message.objects.filter(message_id=message_id).exists():
             raise ValueError("message_id must be unique")
+        
         message = Message.objects.create(
             message_id=message_id,
             sender=sender,

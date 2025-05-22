@@ -7,8 +7,47 @@ from .models import Message
 from .serializers import MessageSerializer
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.permissions import IsAuthenticated
+import cloudinary.uploader
+import logging
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
+
+class FileUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            if 'file' not in request.FILES:
+                return Response({"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+            file = request.FILES['file']
+            # Validate file size
+            if file.size > 100 * 1024 * 1024:  # 100MB limit
+                return Response({"error": "File must be under 100MB"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validate file type
+            allowed_types = ['image/jpeg', 'image/png', 'video/mp4', 'audio/mpeg', 'application/pdf']
+            if file.content_type not in allowed_types:
+                return Response({"error": "Unsupported file type"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Upload to Cloudinary
+            upload_result = cloudinary.uploader.upload(
+                file,
+                folder=f"chat_files/user_{request.user.id}",
+                public_id=f"file_{request.user.id}_{int(timezone.now().timestamp())}",
+                overwrite=True,
+                resource_type="auto"  # Automatically detect resource type (image, video, etc.)
+            )
+
+            return Response({
+                "secure_url": upload_result['secure_url'],
+                "public_id": upload_result['public_id']
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error uploading file to Cloudinary: {str(e)}", exc_info=True)
+            return Response({"error": f"Failed to upload file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class MessageListView(APIView):
     authentication_classes = [JWTAuthentication]
