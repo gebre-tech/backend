@@ -191,3 +191,4 @@ LOGGING = {
         },
     },
 }
+SITE_URL = os.getenv('SITE_URL', 'https://message-app-2025.onrender.com')

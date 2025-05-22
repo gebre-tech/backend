@@ -1,6 +1,7 @@
-# chat/serializers.py
 from rest_framework import serializers
 from .models import Message
+from django.conf import settings
+import cloudinary.uploader
 
 class MessageSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
@@ -14,14 +15,20 @@ class MessageSerializer(serializers.ModelSerializer):
         ]
 
     def create(self, validated_data):
-        return Message.objects.create(**validated_data)
+        file_data = validated_data.pop('file', None)
+        message = Message.objects.create(**validated_data)
+        if file_data:
+            # Upload file to Cloudinary
+            message.file.save(file_data.name, file_data)
+            message.save()
+        return message
 
     def get_file_url(self, obj):
         if obj.file:
-            # Cloudinary URLs are already absolute, so return them directly
-            if obj.file.url.startswith('http'):
-                return obj.file.url
-            # Fallback for local development
+            # Ensure the Cloudinary URL is fully qualified
             request = self.context.get('request')
-            return request.build_absolute_uri(obj.file.url) if request else obj.file.url
+            file_url = obj.file.url
+            if not file_url.startswith('http'):
+                file_url = f"{settings.SITE_URL}{file_url}"
+            return file_url
         return None
