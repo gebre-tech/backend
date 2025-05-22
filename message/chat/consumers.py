@@ -165,12 +165,22 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     resource_type='auto'
                 )
 
+                # Safely determine file_type
+                resource_type = upload_result.get('resource_type', 'raw')
+                file_format = upload_result.get('format')
+                if file_format:
+                    derived_file_type = f"{resource_type}/{file_format}"
+                else:
+                    # Fallback to metadata file_type or default
+                    derived_file_type = file_type if file_type != "application/octet-stream" else f"{resource_type}/unknown"
+                    logger.warning(f"Cloudinary upload missing 'format' for file: {file_name}, using {derived_file_type}")
+
                 message = await self.save_file_message(
                     self.sender_id,
                     self.receiver_id,
                     upload_result['secure_url'],
                     file_name,
-                    upload_result['resource_type'] + '/' + upload_result['format'],
+                    derived_file_type,
                     upload_result['bytes'],
                     nonce,
                     ephemeral_key,
@@ -189,7 +199,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         "receiver": self.receiver_id,
                         "message_type": message_type,
                         "file_name": file_name,
-                        "file_type": upload_result['resource_type'] + '/' + upload_result['format'],
+                        "file_type": derived_file_type,
                         "file_url": file_url,
                         "file_size": upload_result['bytes'],
                         "nonce": nonce,
@@ -201,8 +211,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 )
                 self.pending_metadata = None
             except Exception as e:
-                logger.error(f"Error processing file: {str(e)}")
-                await self.send(text_data=json.dumps({"error": str(e)}))
+                logger.error(f"Error processing file: {str(e)}. Upload result: {upload_result}", exc_info=True)
+                await self.send(text_data=json.dumps({"error": f"Failed to process file: {str(e)}"}))
 
     async def chat_message(self, event):
         message_data = {
