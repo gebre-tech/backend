@@ -25,10 +25,7 @@ class MessageSerializer(serializers.ModelSerializer):
 
     def get_file_url(self, obj):
         if obj.file:
-            # Ensure the Cloudinary URL is fully qualified
-            request = self.context.get('request')
+            # Return the raw Cloudinary URL
             file_url = obj.file.url
-            if not file_url.startswith('http'):
-                file_url = f"{settings.SITE_URL}{file_url}"
             return file_url
         return None
