@@ -1,3 +1,4 @@
+# chat/views.py
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -38,7 +39,7 @@ class MessageListView(APIView):
         if serializer.is_valid():
             sender_id = request.data.get("sender")
             receiver_id = request.data.get("receiver")
-            nonce = request.data.get("nonce")  # Optional nonce from request
+            nonce = request.data.get("nonce")
 
             if not sender_id or not receiver_id:
                 return Response({"error": "Sender and Receiver IDs are required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -46,7 +47,6 @@ class MessageListView(APIView):
             sender = User.objects.get(id=sender_id)
             receiver = User.objects.get(id=receiver_id)
 
-            # Create message with optional nonce
             message_data = {
                 'sender': sender,
                 'receiver': receiver,
@@ -70,3 +70,40 @@ class MessageListView(APIView):
             return Response(all_messages_serializer.data, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request):
+        """Edit a message."""
+        message_id = request.data.get('message_id')
+        if not message_id:
+            return Response({"error": "message_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            message = Message.objects.get(message_id=message_id)
+            if message.sender_id != request.user.id:
+                return Response({"error": "Not authorized to edit this message"}, status=status.HTTP_403_FORBIDDEN)
+
+            serializer = MessageSerializer(message, data=request.data, partial=True, context={'request': request})
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except Message.DoesNotExist:
+            return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    def delete(self, request):
+        """Delete a message."""
+        message_id = request.query_params.get('message_id')
+        if not message_id:
+            return Response({"error": "message_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            message = Message.objects.get(message_id=message_id)
+            if message.sender_id != request.user.id:
+                return Response({"error": "Not authorized to delete this message"}, status=status.HTTP_403_FORBIDDEN)
+
+            if message.file:
+                message.file.delete()
+            message.delete()
+            return Response({"message": "Message deleted"}, status=status.HTTP_204_NO_CONTENT)
+        except Message.DoesNotExist:
+            return Response({"error": "Message not found"}, status=status.HTTP_404_NOT_FOUND)

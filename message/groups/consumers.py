@@ -69,8 +69,13 @@ class GroupChatConsumer(AsyncWebsocketConsumer):
         else:
             self.groups = await self.get_user_groups()
             if not self.groups:
-                logger.warning(f"User {self.user.id} is not a member of any groups")
-                await self.close(code=4005)
+                logger.info(f"User {self.user.id} is not a member of any groups")
+                await self.accept()
+                await self.send(text_data=json.dumps({
+                    "type": "info",
+                    "event_id": str(uuid.uuid4()),
+                    "message": "You haven't joined any groups"
+                }))
                 return
             self.group_channels = []
             for group in self.groups:
@@ -85,7 +90,6 @@ class GroupChatConsumer(AsyncWebsocketConsumer):
 
         await self.accept()
         logger.info(f"GroupChatConsumer connected for user {self.user.id} to groups: {self.group_channels}")
-
     @database_sync_to_async
     def get_user_groups(self):
         return list(Group.objects.filter(members=self.user))
